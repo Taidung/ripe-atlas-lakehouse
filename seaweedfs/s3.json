@@ -25,6 +25,7 @@
         }
       ],
       "actions": [
+        "Read:staging",
         "Write:staging",
         "List:staging"
       ]
@@ -40,9 +41,9 @@
       "actions": [
         "Read:staging",
         "List:staging",
-        "Read:lakehouse",
-        "Write:lakehouse",
-        "List:lakehouse"
+        "Read:warehouse",
+        "Write:warehouse",
+        "List:warehouse"
       ]
     },
     {
@@ -54,8 +55,8 @@
         }
       ],
       "actions": [
-        "Read:lakehouse",
-        "List:lakehouse"
+        "Read:warehouse",
+        "List:warehouse"
       ]
     }
   ]

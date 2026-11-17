@@ -1,7 +1,6 @@
 services:
   spark-iceberg:
     image: tabulario/spark-iceberg
-    container_name: spark-iceberg
     restart: unless-stopped
     ports:
       - "8889:8888"
@@ -22,7 +21,6 @@ services:
 
   nessie:
     image: ghcr.io/projectnessie/nessie:0.108.8
-    container_name: nessie_catalog
     restart: unless-stopped
     ports:
       - "19120:19120"
@@ -63,7 +61,6 @@ services:
 
   master:
     image: chrislusf/seaweedfs
-    container_name: seaweedfs_master
     restart: unless-stopped
     ports:
       - "9333:9333"
@@ -88,7 +85,6 @@ services:
 
   volume:
     image: chrislusf/seaweedfs
-    container_name: seaweedfs_volume
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -119,7 +115,6 @@ services:
   
   filer:
     image: chrislusf/seaweedfs
-    container_name: seaweedfs_filer
     restart: unless-stopped
     ports:
       - "8888:8888"
@@ -150,7 +145,6 @@ services:
   
   s3:
     image: chrislusf/seaweedfs
-    container_name: seaweedfs_s3
     restart: unless-stopped
     ports:
       - "8333:8333"
@@ -191,7 +185,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${S3_ADMIN_SECRET_KEY:?Set S3_ADMIN_SECRET_KEY in .env}
     command:
       - |
-        for bucket in staging lakehouse; do
+        for bucket in staging warehouse; do
           aws --endpoint-url http://s3:8333 s3api head-bucket --bucket "$$bucket" 2>/dev/null ||
             aws --endpoint-url http://s3:8333 s3api create-bucket --bucket "$$bucket"
         done
