@@ -1,0 +1,212 @@
+services:
+  spark-iceberg:
+    image: tabulario/spark-iceberg
+    container_name: spark-iceberg
+    restart: unless-stopped
+    ports:
+      - "8889:8888"
+      - "4040:4040"
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_PROCESSING_ACCESS_KEY:?Set S3_PROCESSING_ACCESS_KEY in .env}
+      AWS_SECRET_ACCESS_KEY: ${S3_PROCESSING_SECRET_KEY:?Set S3_PROCESSING_SECRET_KEY in .env}
+      AWS_REGION: us-east-1
+    volumes:
+      - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+    networks:
+      - lakehouse
+    depends_on:
+      nessie:
+        condition: service_healthy
+      init-buckets:
+        condition: service_completed_successfully
+
+  nessie:
+    image: ghcr.io/projectnessie/nessie:0.108.8
+    container_name: nessie_catalog
+    restart: unless-stopped
+    ports:
+      - "19120:19120"
+    environment:
+      NESSIE_VERSION_STORE_TYPE: JDBC2
+      NESSIE_VERSION_STORE_PERSIST_JDBC_DATASOURCE: postgresql
+      QUARKUS_DATASOURCE_POSTGRESQL_JDBC_URL: jdbc:postgresql://postgres:5432/nessie
+      QUARKUS_DATASOURCE_POSTGRESQL_USERNAME: nessie
+      QUARKUS_DATASOURCE_POSTGRESQL_PASSWORD: ${NESSIE_POSTGRES_PASSWORD:?Set NESSIE_POSTGRES_PASSWORD in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:19120/api/v2/config"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - lakehouse
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nessie
+      POSTGRES_USER: nessie
+      POSTGRES_PASSWORD: ${NESSIE_POSTGRES_PASSWORD:?Set NESSIE_POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nessie -d nessie"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lakehouse
+
+  master:
+    image: chrislusf/seaweedfs
+    container_name: seaweedfs_master
+    restart: unless-stopped
+    ports:
+      - "9333:9333"
+    command:
+      - master
+      - -ip=master
+      - -ip.bind=0.0.0.0
+      - -port=9333
+      - -mdir=/data
+      - -volumeSizeLimitMB=1024
+      - -defaultReplication=000
+    volumes:
+      - master_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9333/cluster/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - lakehouse
+
+  volume:
+    image: chrislusf/seaweedfs
+    container_name: seaweedfs_volume
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    command: 
+      - volume
+      - -master=master:9333
+      - -ip=volume
+      - -ip.bind=0.0.0.0
+      - -port=8080
+      - -dataCenter=dc1
+      - -rack=rack1
+      - -dir=/data
+      - -max=0
+      - -index=leveldb
+    volumes:
+      - volume_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      master:
+        condition: service_healthy
+    networks:
+      - lakehouse
+  
+  filer:
+    image: chrislusf/seaweedfs
+    container_name: seaweedfs_filer
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+    command:
+      - filer
+      - -master=master:9333
+      - -ip=filer
+      - -ip.bind=0.0.0.0
+      - -port=8888
+      - -dataCenter=dc1
+      - -rack=rack1
+      - -defaultStoreDir=/data
+    volumes:
+      - filer_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8888/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      master:
+        condition: service_healthy
+      volume:
+        condition: service_healthy
+    networks:
+      - lakehouse
+  
+  s3:
+    image: chrislusf/seaweedfs
+    container_name: seaweedfs_s3
+    restart: unless-stopped
+    ports:
+      - "8333:8333"
+    command:
+      - s3
+      - -filer=filer:8888
+      - -ip=s3
+      - -ip.bind=0.0.0.0
+      - -port=8333
+      - -port.iceberg=0
+      - -port.lance=0
+      - -config=/etc/seaweedfs/s3.json
+    env_file: .env
+    volumes:
+      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8333/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      master:
+        condition: service_healthy
+      volume:
+        condition: service_healthy
+      filer:
+        condition: service_healthy
+    networks:
+      - lakehouse
+
+  init-buckets:
+    image: amazon/aws-cli:2.27.41
+    entrypoint: ["/bin/sh", "-ec"]
+    environment:
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ${S3_ADMIN_ACCESS_KEY:?Set S3_ADMIN_ACCESS_KEY in .env}
+      AWS_SECRET_ACCESS_KEY: ${S3_ADMIN_SECRET_KEY:?Set S3_ADMIN_SECRET_KEY in .env}
+    command:
+      - |
+        for bucket in staging lakehouse; do
+          aws --endpoint-url http://s3:8333 s3api head-bucket --bucket "$$bucket" 2>/dev/null ||
+            aws --endpoint-url http://s3:8333 s3api create-bucket --bucket "$$bucket"
+        done
+    depends_on:
+      s3:
+        condition: service_healthy
+    networks:
+      - lakehouse
+
+networks:
+  lakehouse:
+    driver: bridge
+
+volumes:
+  master_data:
+  volume_data:
+  filer_data: 
+  postgres_data:

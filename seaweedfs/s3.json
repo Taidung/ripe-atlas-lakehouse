@@ -1,0 +1,62 @@
+{
+  "identities": [
+    {
+      "name": "storage-admin",
+      "credentials": [
+        {
+          "accessKey": "${S3_ADMIN_ACCESS_KEY}",
+          "secretKey": "${S3_ADMIN_SECRET_KEY}"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "Write",
+        "List",
+        "Tagging"
+      ]
+    },
+    {
+      "name": "atlas-ingest",
+      "credentials": [
+        {
+          "accessKey": "${S3_INGEST_ACCESS_KEY}",
+          "secretKey": "${S3_INGEST_SECRET_KEY}"
+        }
+      ],
+      "actions": [
+        "Write:staging",
+        "List:staging"
+      ]
+    },
+    {
+      "name": "atlas-spark",
+      "credentials": [
+        {
+          "accessKey": "${S3_PROCESSING_ACCESS_KEY}",
+          "secretKey": "${S3_PROCESSING_SECRET_KEY}"
+        }
+      ],
+      "actions": [
+        "Read:staging",
+        "List:staging",
+        "Read:lakehouse",
+        "Write:lakehouse",
+        "List:lakehouse"
+      ]
+    },
+    {
+      "name": "atlas-reader",
+      "credentials": [
+        {
+          "accessKey": "${S3_SERVING_ACCESS_KEY}",
+          "secretKey": "${S3_SERVING_SECRET_KEY}"
+        }
+      ],
+      "actions": [
+        "Read:lakehouse",
+        "List:lakehouse"
+      ]
+    }
+  ]
+}
