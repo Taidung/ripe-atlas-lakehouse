@@ -1,3 +1,6 @@
+import argparse
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import dlt
@@ -34,6 +37,7 @@ SELECTED_PROBE_IDS = [
     10095, 23002, 30712, 31228, 33674, 50365, 53098, 60575, 61210, 61844,
     63050, 64783, 1010528, 1014480, 1014577, 1015134, 1015838, 1015851, 1016956, 1017877,
 ]
+TIMEZONE = timezone(timedelta(hours=7))
 
 ripe_atlas_client = RESTClient(
     base_url="https://atlas.ripe.net/api/v2/",
@@ -100,6 +104,45 @@ def get_probe_metadata():
             raise ValueError(f"Probe IDs not returned by RIPE Atlas: {sorted(missing)}")
 
 
+@dlt.resource(name="ping_results", write_disposition="append", max_table_nesting=0)
+def get_ping_results(window_start: datetime, window_end: datetime):
+    start = int(window_start.timestamp())
+    end = int(window_end.timestamp())
+    selected = set(SELECTED_PROBE_IDS)
+    for measurement_id in MEASUREMENT_IDS:
+        path = f"measurements/{measurement_id}/results/"
+        try:
+            with ripe_atlas_client.get(
+                path,
+                params={
+                    "start": start - 1,
+                    "stop": end,
+                    "probe_ids": ",".join(map(str, SELECTED_PROBE_IDS)),
+                    "public_only": "true",
+                    "format": "txt",
+                },
+                stream=True,
+            ) as response:
+                response.raise_for_status()
+                # shortcut: interrupted streams restart the hour, add resume support if hourly responses grow too large.
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    result = json.loads(line)
+                    if (
+                        not isinstance(result, dict)
+                        or result.get("msm_id") != measurement_id
+                        or result.get("prb_id") not in selected
+                        or result.get("type") != "ping"
+                        or type(result.get("timestamp")) is not int
+                    ):
+                        raise ValueError(f"Invalid ping result for measurement {measurement_id}")
+                    if start <= result["timestamp"] < end:
+                        yield result
+        except (RequestException, ValueError) as exc:
+            raise RuntimeError(f"RIPE Atlas results failed for measurement {measurement_id}, {window_start.isoformat()}") from exc
+
+
 def run_ingestion() -> None:
     with switched_run_context(RunContext(str(Path(__file__).resolve().parent))):
         pipeline = dlt.pipeline(
@@ -119,5 +162,43 @@ def run_ingestion() -> None:
         print(load_info)
 
 
+def run_ping_results(window_start: datetime | None = None) -> None:
+    if window_start is None:
+        window_start = datetime.now(TIMEZONE).replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    elif window_start.tzinfo is None:
+        raise ValueError("window_start must include a UTC offset")
+    window_start = window_start.astimezone(TIMEZONE)
+    if window_start.minute or window_start.second or window_start.microsecond:
+        raise ValueError("window_start must be aligned to an hour in UTC+7")
+    window_end = window_start + timedelta(hours=1)
+    if window_end > datetime.now(TIMEZONE):
+        raise ValueError("The hourly window must be complete")
+
+    with switched_run_context(RunContext(str(Path(__file__).resolve().parent))):
+        pipeline = dlt.pipeline(
+            pipeline_name="ripe_atlas_ping_results",
+            destination=dlt.destinations.filesystem(
+                layout="{table_name}/window_date={YYYY}-{MM}-{DD}/window_hour={HH}/{load_id}.{file_id}.{ext}",
+                current_datetime=window_start,
+            ),
+            dataset_name="ripe_atlas",
+        )
+        try:
+            load_info = pipeline.run(get_ping_results(window_start, window_end), loader_file_format="jsonl")
+            load_info.raise_on_failed_jobs()
+        except Exception as exc:
+            raise RuntimeError(f"RIPE Atlas ping results failed for {window_start.isoformat()}") from exc
+        print(load_info)
+
+
 if __name__ == "__main__":
-    run_ingestion()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ping-results", action="store_true")
+    parser.add_argument("--window-start", type=datetime.fromisoformat)
+    args = parser.parse_args()
+    if args.ping_results:
+        run_ping_results(args.window_start)
+    elif args.window_start:
+        parser.error("--window-start requires --ping-results")
+    else:
+        run_ingestion()
