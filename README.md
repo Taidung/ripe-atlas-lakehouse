@@ -224,7 +224,7 @@ docker compose exec -T -w /opt/app spark-iceberg python -m pytest -q -p no:cache
 
 ### Pipeline cũ (legacy)
 
-Job thế hệ đầu (`staging_to_bronze.py`, `bronze_to_silver.py`, SCD1) đã bị xoá khỏi repo; xem lại bằng `git show 90b7c8a:transformation/legacy/`.
+Job thế hệ đầu (`staging_to_bronze.py`, `bronze_to_silver.py`, SCD1) đã bị xoá khỏi repo; xem lại bằng `git show 13592d0:transformation/legacy/`.
 Các bảng `bronze.ping_results` và `silver.legacy_*` do chúng tạo ra vẫn còn trong catalog, chỉ xoá khi chủ đồ án đồng ý.
 
 ## 5. Truy vấn bằng SQL client qua Trino

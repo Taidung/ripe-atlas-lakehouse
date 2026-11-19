@@ -8,7 +8,7 @@
 - Nessie 0.108.8 lưu trên Postgres 16; Spark chạy bằng image `tabulario/spark-iceberg`.
 - dlt ingest metadata measurement/probe và ping results theo giờ UTC+7 cho 200 probe cố định.
 
-### Chưa commit lúc bắt đầu phiên (công việc của chủ đồ án; sau đó đã commit nguyên trạng ở `3cf93c5`)
+### Chưa commit lúc bắt đầu phiên (công việc của chủ đồ án; sau đó đã commit nguyên trạng ở `6313ae1`)
 
 - `spark/staging_to_bronze.py`, `spark/bronze_to_silver.py`
 - `tests/test_bronze.py`, `tests/test_silver.py`
@@ -37,7 +37,7 @@
    - Ổ C: của Windows vẫn báo trống 13,2 GB, vì file `.vhdx` không tự co lại.
    - Chỗ trống khả dụng cho Docker ≈ 6,5 GB (bên trong vhdx) + 13,2 GB (C:) ≈ 19,7 GB.
    - Chuyển Docker sang D: vẫn là phương án dự phòng khi dữ liệu tăng.
-3. Phần Bronze/Silver chưa commit: **đã commit nguyên trạng** (`3cf93c5`) trước khi refactor.
+3. Phần Bronze/Silver chưa commit: **đã commit nguyên trạng** (`6313ae1`) trước khi refactor.
 4. Điều phối: **Airflow standalone** (LocalExecutor), đặt ở profile `orchestration` riêng.
 
 ## Phiên 2026-11-19: Giai đoạn 1 (hạ tầng core và compatibility)
@@ -238,7 +238,7 @@ Mọi đường dẫn trong `docs/` đã đổi sang cấu trúc mới, kể c�
 | `spark/lakehouse/quality.py` (một file) | package `quality/dq/`: `results`, `gx_suites`, `gx_runner`, `checks`, `recorder` |
 | `spark/lakehouse/ops.py` | `transformation/lakehouse/publication.py` |
 | `crosscheck_gold.py`, `maintenance.py` | `gold_crosscheck.py`, `iceberg_maintenance.py` |
-| `spark/jobs/staging_to_bronze.py`, `bronze_to_silver.py` + test | đã xoá (xem `git show 90b7c8a:transformation/legacy/`) |
+| `spark/jobs/staging_to_bronze.py`, `bronze_to_silver.py` + test | đã xoá (xem `git show 13592d0:transformation/legacy/`) |
 | `ingestion/{config,windows,atlas_http,records,staging,pipeline,cleanup,build_probe_set}.py` | `ingestion/{settings,time_windows,api_client,result_records,staging_store,jobs,staging_cleanup,probe_sampling}.py`; CLI ở `ingestion/cli.py` |
 | `seaweedfs/` | `storage/seaweedfs/` |
 | `trino/`, `superset/` | `serving/trino/`, `serving/superset/` |
@@ -266,13 +266,13 @@ Kiểm chứng sau refactor (2026-11-19):
   - `silver_build`: `published_with_warnings`. Cảnh báo duy nhất là `rtt_ms` ngoài [0, 60000] ở `fact_ping_reply`, giống lần chạy trước refactor.
   - `gold_build`: `published`
   - `gold_crosscheck`: **PASS**, sai số percentile lớn nhất 0,93%.
-- CI GitHub run 44508370312 (commit `f992573`): **success**. Gồm job `lint-and-unit` (ruff, Compose, JSON/YAML, unit test) và `spark-tests` (build image, chạy `tests/transformation` + `tests/quality`).
+- CI GitHub run 44508370312 (commit `c048848`): **success**. Gồm job `lint-and-unit` (ruff, Compose, JSON/YAML, unit test) và `spark-tests` (build image, chạy `tests/transformation` + `tests/quality`).
 - Superset `provision.py` và OpenMetadata đã được kiểm chứng lại sau đổi mount `config/metrics.json`: xem mục "Kiểm chứng nốt trước báo cáo".
 
 ## Phiên 2026-11-19: Dọn code (clean code)
 
 Đã xoá:
-- `transformation/legacy/`: job SCD1 thế hệ đầu cùng test của chúng, đã được thay thế. Xem lại bằng `git show 90b7c8a:transformation/legacy/`.
+- `transformation/legacy/`: job SCD1 thế hệ đầu cùng test của chúng, đã được thay thế. Xem lại bằng `git show 13592d0:transformation/legacy/`.
 - `requirements.txt` ở gốc repo: trùng với `pyproject.toml` và không nơi nào dùng.
 - Code không dùng:
   - `ingestion.metrics.summarize`
@@ -304,7 +304,7 @@ Không đổi hành vi. Kiểm chứng (2026-11-19):
   - Silver `published_with_warnings` với số dòng giống hệt lần chạy trước khi dọn, cùng một cảnh báo `rtt_ms`.
   - Gold `published`, 7 mart đúng từng số dòng (74 / 5.786 / 20.333 / 25.316 / 247.479 / 13.319 / 192).
   - `gold_crosscheck` **PASS**, sai số percentile lớn nhất 0,93%.
-- CI GitHub run 44529234412 (commit `aeb3546`): **success**. Cả `lint-and-unit` (đã có luật E501) và `spark-tests` đều pass.
+- CI GitHub run 44529234412 (commit `33ecd77`): **success**. Cả `lint-and-unit` (đã có luật E501) và `spark-tests` đều pass.
 
 ## Phiên 2026-11-19: Sửa 10 lỗi từ code review
 
@@ -332,7 +332,7 @@ Kiểm chứng:
   - Silver bị chặn, `snapshot_id` công bố trước và sau bằng nhau.
   - Gold dựng lại từ bản cũ, đủ 41 dòng như `main`.
   - Ngày không có Silver: Gold không tạo commit mới.
-- CI GitHub run 44540182754 (commit `fa8ede0`): **success**. Cả `lint-and-unit` và `spark-tests` đều pass.
+- CI GitHub run 44540182754 (commit `658b4c1`): **success**. Cả `lint-and-unit` và `spark-tests` đều pass.
 - Đã xoá 10 group Pushgateway cũ không có `run_type` (group số liệu và group thành công/thất bại của bronze_metadata, bronze_results, silver, gold).
 
 ## Phiên 2026-11-19: Cảnh báo sau khi tách metric theo run_type
@@ -350,7 +350,7 @@ Kiểm chứng trên Prometheus/Grafana đang chạy:
 - Biểu thức DQ cũ cho `silver = 2`, tức sẽ bắn, do metric `manual` của lần test cố ý bị chặn. Biểu thức mới không có kết quả.
 - Sau khi restart Grafana, cả 5 rule số liệu job đã lọc `scheduled`; rule DQ critical ở trạng thái `inactive`.
 - Hai cảnh báo đang bắn là đúng thực tế: Gold trễ (Airflow đang tắt) và service không phản hồi (Trino/Superset/Airflow đang tắt).
-- CI GitHub run 44543534964 (commit `e5bfc45`): **success** (`lint-and-unit`, `spark-tests`).
+- CI GitHub run 44543534964 (commit `ce6f868`): **success** (`lint-and-unit`, `spark-tests`).
 
 ## Phiên 2026-11-19: run_type cho ingestion, completeness khi kỳ vọng bằng 0
 
@@ -365,7 +365,7 @@ Kiểm chứng trên Prometheus/Grafana đang chạy:
   - Chạy thật `metadata` không truyền `--run-type`: Pushgateway ghi group `{stage=metadata, run_type=manual}`.
   - `gold_build` 2026-11-19 chạy lại `published`, số dòng không đổi.
 - Đã xoá group Pushgateway `{stage=metadata, run_type=scheduled, outcome=success}` do lần chạy tay trước đây bị gắn nhầm nhãn.
-- CI GitHub run 44546172283 (commit `690c2b8`): **success** (`lint-and-unit`, `spark-tests`).
+- CI GitHub run 44546172283 (commit `0efdd19`): **success** (`lint-and-unit`, `spark-tests`).
 
 ## Phiên 2026-11-19: Task repair của daily_metadata
 
@@ -375,7 +375,7 @@ Kiểm chứng trên Prometheus/Grafana đang chạy:
 - Sửa: hai task này mang `run_type="repair"`; `SparkJobOperator` bỏ giá trị mặc định, mọi task phải ghi rõ `run_type`.
   Đã rà lại DAG: mỗi (stage, `scheduled`) chỉ thuộc đúng một task.
 - Chưa kiểm chứng trên Airflow đang chạy (Airflow tắt để tiết kiệm RAM); đã kiểm tra cú pháp, lint, và rà các lời gọi operator bằng AST.
-- CI GitHub run 44547418462 (commit `9c02947`): **success** (`lint-and-unit`, `spark-tests`).
+- CI GitHub run 44547418462 (commit `945cb3d`): **success** (`lint-and-unit`, `spark-tests`).
 
 ## Phiên 2026-11-19: Kiểm chứng nốt trước báo cáo
 
@@ -399,7 +399,14 @@ Chạy tuần tự từng nhóm service (tạm dừng Spark và monitoring để
   - mọi đường dẫn `via:` trỏ tới file có thật sau refactor.
 - RAM: Windows thấp nhất 350 MB khi Trino + Superset chạy; không chạm pagefile nặng. Đã bật lại Spark và monitoring;
   dữ liệu Pushgateway còn nguyên.
-- CI GitHub run 44551323554 (commit `4d63794`): **success** (`lint-and-unit`, `spark-tests`).
+- CI GitHub run 44551323554 (commit `7eb9b5f`): **success** (`lint-and-unit`, `spark-tests`).
+
+## Phiên 2026-11-19: Viết lại lịch sử nhánh (bỏ ghi công Claude)
+
+Bỏ dòng `Co-Authored-By: Claude` khỏi 34 commit của nhánh `feat/design-and-api-survey`. Nội dung file không đổi (cây
+thư mục của commit cuối giống hệt), nhưng mã commit thay đổi. Các mã trong tài liệu đã được đổi sang mã mới. Riêng
+`config/probe_sets/dev-200-v1.json` vẫn ghi `3cf93c5` (nay là `6313ae1`), vì probe set là bất biến: SHA-256 của nó
+nằm trong mọi manifest ingest. Các run CI ghi ở trên vẫn đúng theo số run; chúng chạy trên mã commit cũ, cùng nội dung.
 
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
@@ -413,7 +420,7 @@ Chạy tuần tự từng nhóm service (tạm dừng Spark và monitoring để
 | GX tạo kết quả và chặn công bố khi lỗi critical | Đạt (nhánh Nessie tạm) |
 | OpenMetadata hiển thị metadata và lineage | Đạt ở giai đoạn 5 (kiểm tra qua API; chưa chụp ảnh UI). Sau refactor mới kiểm chứng phần đọc cấu hình, chưa chạy lại bản đầy đủ vì thiếu RAM |
 | Grafana có metric thật, cảnh báo đã thử | Đạt |
-| CI có workflow chạy được và có bằng chứng | Đạt cho `ci.yml`: run 44488710698 (commit d65e29b) xanh cả `lint-and-unit` và `spark-tests` trên GitHub. `integration.yml` chưa chạy |
+| CI có workflow chạy được và có bằng chứng | Đạt cho `ci.yml`: run 44488710698 (commit 72ef623) xanh cả `lint-and-unit` và `spark-tests` trên GitHub. `integration.yml` chưa chạy |
 | Báo cáo chỉ dùng số đo thật | Đạt (`docs/test-report.md`) |
 
 ## Còn lại và đề xuất tiếp theo
