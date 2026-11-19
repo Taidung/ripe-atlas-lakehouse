@@ -4,7 +4,7 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: ["**"]   # mọi nhánh: push là chạy CI, không cần mở PR
   workflow_dispatch:
 
 concurrency:
