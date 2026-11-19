@@ -33,7 +33,11 @@
 1. Chế độ `analysis` dùng **mẫu phân tầng** (country × ASN × af). Xem ADR-0001.
    - Đã đếm tầng thật.
    - **Đã duyệt k = 2, trần 100 probe/quốc gia** ≈ 4.290 probe v4 và 2.869 probe v6 (`strat-k2-c100-v1`).
-2. Đĩa: **chủ đồ án tự chuyển Docker/WSL data sang D:**. Cho tới khi xong, không pull image mới.
+2. Đĩa: chủ đồ án chọn **xóa Docker build cache** (`docker builder prune -a -f`, ngày 2026-11-19).
+   - Giải phóng 6,485 GB bên trong ổ ảo WSL của Docker.
+   - Ổ C: của Windows vẫn báo trống 13,2 GB, vì file `.vhdx` không tự co lại.
+   - Chỗ trống khả dụng cho Docker ≈ 6,5 GB (bên trong vhdx) + 13,2 GB (C:) ≈ 19,7 GB.
+   - Chuyển Docker sang D: vẫn là phương án dự phòng khi dữ liệu tăng.
 3. Phần Bronze/Silver chưa commit: **đã commit nguyên trạng** (`3cf93c5`) trước khi refactor.
 4. Điều phối: **Airflow standalone** (LocalExecutor), đặt ở profile `orchestration` riêng.
 
