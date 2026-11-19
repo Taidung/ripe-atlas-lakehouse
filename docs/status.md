@@ -32,8 +32,7 @@
 
 1. Chế độ `analysis` dùng **mẫu phân tầng** (country × ASN × af). Xem ADR-0001.
    - Đã đếm tầng thật.
-   - Đề xuất k = 2, trần 100 probe/quốc gia ≈ 4.290 probe v4 và 2.869 probe v6.
-   - **Chờ duyệt k và trần.**
+   - **Đã duyệt k = 2, trần 100 probe/quốc gia** ≈ 4.290 probe v4 và 2.869 probe v6 (`strat-k2-c100-v1`).
 2. Đĩa: **chủ đồ án tự chuyển Docker/WSL data sang D:**. Cho tới khi xong, không pull image mới.
 3. Phần Bronze/Silver chưa commit: **đã commit nguyên trạng** (`3cf93c5`) trước khi refactor.
 4. Điều phối: **Airflow standalone** (LocalExecutor), đặt ở profile `orchestration` riêng.

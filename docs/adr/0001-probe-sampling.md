@@ -1,6 +1,6 @@
 # ADR-0001: Lấy mẫu probe phân tầng cho chế độ `analysis`
 
-- Trạng thái: **Đã chấp nhận hướng đi (2026-11-19)**; tham số k và trần quốc gia **chờ chủ đồ án duyệt**.
+- Trạng thái: **Đã chấp nhận (2026-11-19)**, chủ đồ án duyệt **k = 2, C = 100**. Phiên bản đầu tiên của tập mẫu sẽ mang tên `strat-k2-c100-v1`.
 - Bối cảnh: toàn bộ public probes ≈ 16 triệu result/ngày, toàn hệ ước tính ≈ 3 GB/ngày (`docs/api-survey.md`). Máy dev giới hạn RAM và đĩa.
 
 ## Quyết định
