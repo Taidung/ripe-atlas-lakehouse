@@ -375,6 +375,7 @@ Kiểm chứng trên Prometheus/Grafana đang chạy:
 - Sửa: hai task này mang `run_type="repair"`; `SparkJobOperator` bỏ giá trị mặc định, mọi task phải ghi rõ `run_type`.
   Đã rà lại DAG: mỗi (stage, `scheduled`) chỉ thuộc đúng một task.
 - Chưa kiểm chứng trên Airflow đang chạy (Airflow tắt để tiết kiệm RAM); đã kiểm tra cú pháp, lint, và rà các lời gọi operator bằng AST.
+- CI GitHub run 44547418462 (commit `9c02947`): **success** (`lint-and-unit`, `spark-tests`).
 
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
