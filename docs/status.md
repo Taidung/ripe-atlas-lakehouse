@@ -365,6 +365,7 @@ Kiểm chứng trên Prometheus/Grafana đang chạy:
   - Chạy thật `metadata` không truyền `--run-type`: Pushgateway ghi group `{stage=metadata, run_type=manual}`.
   - `gold_build` 2026-11-19 chạy lại `published`, số dòng không đổi.
 - Đã xoá group Pushgateway `{stage=metadata, run_type=scheduled, outcome=success}` do lần chạy tay trước đây bị gắn nhầm nhãn.
+- CI GitHub run 44546172283 (commit `690c2b8`): **success** (`lint-and-unit`, `spark-tests`).
 
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
