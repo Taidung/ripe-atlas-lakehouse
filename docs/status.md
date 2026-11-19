@@ -211,3 +211,41 @@
 3. OpenMetadata: metadata Trino/Superset và lineage.
 4. GitHub Actions: lint, unit test, Spark test, smoke test.
 5. Compaction, expire snapshot, retention staging.
+
+## Phiên 2026-11-19: Giai đoạn 5 (điều phối, giám sát, governance, CI)
+
+Bằng chứng chi tiết: `docs/test-report.md`.
+
+- **Airflow 3.4.0:**
+  - 5 DAG (hourly, metadata hằng ngày, đối soát, backfill, bảo trì) và 2 pool.
+  - Một lần chạy hourly theo lịch thành công trọn chuỗi.
+  - DAG hourly **đang tạm dừng**, Airflow **đang tắt** để tiết kiệm RAM.
+- **Giám sát:**
+  - Pushgateway (đã sửa persistence), Prometheus và Grafana: dashboard 18 panel, 8 cảnh báo, runbook.
+  - Đã thử 5 tình huống cảnh báo, và phát hiện, sửa 1 false positive về dung lượng đĩa.
+- **OpenMetadata 2.0.8:** 20 bảng, dashboard và 23 chart, glossary 28 thuật ngữ, 23 cạnh lineage khai báo, column lineage.
+- **CI:** 3 workflow, lint sạch. **Chưa chạy trên GitHub.**
+- **Phục hồi:** đã thử 12 tình huống (bảng §2 của test report), trong đó có 2 sự cố thật: Silver OOM và DNS lỗi do quá tải RAM.
+
+## Đối chiếu tiêu chí nghiệm thu cuối
+
+| Tiêu chí | Trạng thái |
+|---|---|
+| Chạy được từ checkout sạch theo README | Mọi lệnh trong README đều đã chạy ở các phiên này. **Chưa thử trên một checkout hoàn toàn sạch**: `integration.yml` làm việc đó khi được chạy |
+| Ingest đủ 4 measurement theo phạm vi probe đã cấu hình | Đạt (dev và strat) |
+| Silver/Gold đúng grain, KPI đúng, test rerun/backfill đạt | Đạt (crosscheck PASS, checksum giống hệt, repair-unknown) |
+| Trino truy vấn được cùng dữ liệu Spark ghi | Đạt (smoke test, cùng snapshot) |
+| Superset có dashboard hoạt động, filter và metric được đối chiếu | Đạt (10/10) |
+| GX tạo kết quả và chặn công bố khi lỗi critical | Đạt (nhánh Nessie tạm) |
+| OpenMetadata hiển thị metadata và lineage | Đạt (kiểm tra qua API; chưa chụp ảnh UI) |
+| Grafana có metric thật, cảnh báo đã thử | Đạt |
+| CI có workflow chạy được và có bằng chứng | **Một phần:** workflow đã viết, các bước đã chạy tương đương ở local, chưa có lần chạy trên GitHub |
+| Báo cáo chỉ dùng số đo thật | Đạt (`docs/test-report.md`) |
+
+## Còn lại và đề xuất tiếp theo
+
+1. Push lên GitHub để chạy `ci.yml` (cần chủ đồ án đồng ý), rồi chạy `integration.yml` thủ công.
+2. Chọn cohort cho lịch chạy chính (`PROBE_SET_VERSION=strat-k2-c100-v1`) và chạy ≥ 24 giờ, để đo tải thật một ngày ở chế độ analysis (bộ nhớ Silver, thời gian chạy).
+3. Ghi nhiều bảng nguyên tử bằng nhánh Nessie (ghi trên nhánh, kiểm tra, merge vào `main`); triển khai Nessie GC.
+4. Tên quốc gia/ASN: cần duyệt nguồn tham chiếu.
+5. Xóa các bảng legacy (`bronze.ping_results`, `silver.legacy_*`) nếu chủ đồ án đồng ý.

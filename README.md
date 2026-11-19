@@ -35,7 +35,7 @@ cp .env.example .env   # rồi thay mọi giá trị change-me
 | `docker compose --profile analytics up -d` | core + Trino + Superset | ≈ 2,9–3,5 GB (Trino giới hạn 3 GB) |
 | `docker compose --profile all up -d` | toàn bộ service đã khai báo | — |
 
-Profile `jobs` chứa container ingestion, dùng qua `docker compose --profile jobs run --rm ingestion ...`. Các profile `orchestration`, `governance` và `monitoring` sẽ được thêm ở các giai đoạn sau.
+Profile `jobs` chứa container ingestion, dùng qua `docker compose --profile jobs run --rm ingestion ...`. Profile `orchestration` (Airflow), `monitoring` (Prometheus/Grafana) và `governance` (OpenMetadata) ở mục 6–8. **Không đủ RAM để bật tất cả cùng lúc trên máy 16 GB**; xem `docs/test-report.md` §3.
 
 Cổng truy cập:
 
@@ -211,3 +211,82 @@ Truy vấn mẫu cho Gold và drill-down Silver: `docs/sql-examples.md`.
 ```bash
 docker compose exec trino trino --execute "SELECT measurement_id, count(*), count(DISTINCT probe_id) FROM nessie.bronze.ping_result_raw GROUP BY 1"
 ```
+
+## 6. Điều phối (Airflow)
+
+```bash
+docker compose --profile orchestration up -d
+docker compose exec airflow airflow dags unpause ripe_atlas_hourly      # DAG mặc định bị tạm dừng
+docker compose exec airflow airflow dags trigger ripe_atlas_backfill -c '{"start":"2026-11-19T00:00:00Z","end":"2026-11-19T03:00:00Z","probe_set":"strat-k2-c100-v1"}'
+```
+
+- Mở http://localhost:8090. User `admin`; mật khẩu tự sinh trong `/opt/airflow/logs/.auth/simple_auth_manager_passwords.json`:
+  ```bash
+  docker compose exec airflow cat /opt/airflow/logs/.auth/simple_auth_manager_passwords.json
+  ```
+- Muốn lịch chạy theo giờ dùng mẫu phân tầng: đặt `PROBE_SET_VERSION=strat-k2-c100-v1` trong `.env`, rồi tạo lại container Airflow.
+- Danh sách DAG, pool và cách xử lý sự cố: `docs/runbook.md`. Lý do chọn Airflow: `docs/adr/0002-orchestration.md`.
+
+## 7. Giám sát (Prometheus, Pushgateway, Grafana)
+
+```bash
+docker compose --profile monitoring up -d
+```
+
+| Thành phần | Địa chỉ |
+|---|---|
+| Grafana | http://localhost:3000 (`admin` / `GRAFANA_ADMIN_PASSWORD`), folder "RIPE Atlas Lakehouse": dashboard 18 panel và 8 cảnh báo |
+| Prometheus | http://localhost:9090 |
+| Pushgateway | http://localhost:9091 |
+
+Mỗi cảnh báo có runbook riêng trong `docs/runbook.md`. Dashboard được sinh từ code:
+
+```bash
+python monitoring/grafana/build_dashboard.py
+```
+
+## 8. Governance (OpenMetadata)
+
+Xem `docs/governance.md`.
+- OpenMetadata cần khoảng 2,1 GB RAM. Trên máy 16 GB, hãy chạy tuần tự từng nhóm (dừng Airflow và monitoring trước).
+- Khi dừng service, **luôn ghi rõ tên service**: `docker compose --profile X stop` mà không có tên sẽ dừng cả core.
+
+```bash
+docker compose --profile analytics --profile governance up -d om-db om-search om-server trino superset superset-db
+docker compose --profile governance run --rm om-ingestion
+```
+
+Mở http://localhost:8585.
+
+## 9. CI
+
+| Workflow | Khi chạy | Nội dung |
+|---|---|---|
+| `.github/workflows/ci.yml` | PR, push | Offline: ruff, kiểm tra cấu hình Compose/JSON, unit + contract test, build image Spark, test Spark |
+| `.github/workflows/integration.yml` | Thủ công hoặc hằng đêm | Stack thật: 1 giờ dữ liệu dev → Gold, smoke test, idempotency, chặn công bố khi lỗi DQ, Superset |
+| `.github/workflows/live-api.yml` | Thủ công hoặc hằng tuần | Contract test với RIPE Atlas API thật |
+
+Chạy lint và test tại máy giống CI:
+
+```bash
+uv run --frozen ruff check ingestion tests spark superset airflow monitoring governance
+uv run --frozen pytest -q
+```
+
+## 10. Tài liệu
+
+| File | Nội dung |
+|---|---|
+| `docs/design.md` | Kiến trúc |
+| `docs/api-survey.md` | Khảo sát API |
+| `docs/data-contracts.md` | Data contract |
+| `docs/silver-model.md` | Mô hình Silver |
+| `docs/metric-dictionary.md` | Từ điển metric |
+| `docs/dashboard-spec.md` | Đặc tả dashboard |
+| `docs/sql-examples.md` | Truy vấn mẫu |
+| `docs/governance.md` | Governance |
+| `docs/runbook.md` | Runbook |
+| `docs/test-report.md` | Báo cáo kiểm thử |
+| `docs/compatibility.md` | Phiên bản đã kiểm chứng |
+| `docs/adr/` | Quyết định thiết kế |
+| `docs/status.md` | Trạng thái và bước tiếp theo |

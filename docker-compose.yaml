@@ -533,11 +533,25 @@ services:
       - lakehouse
 
   # ---------------------------------------------------------------- monitoring
+  # Pushgateway chạy với user nobody; volume mới tạo thuộc root nên ghi file persistence bị "permission denied"
+  # (sự cố 2026-11-19: mất toàn bộ metric sau khi reboot). Container init chown volume trước khi Pushgateway chạy.
+  pushgateway-init:
+    logging: *default-logging
+    image: prom/pushgateway:v1.11.4
+    profiles: ["monitoring", "all"]
+    user: "0"
+    entrypoint: ["chown", "-R", "65534:65534", "/data"]
+    volumes:
+      - pushgateway_data:/data
+
   pushgateway:
     logging: *default-logging
     image: prom/pushgateway:v1.11.4
     profiles: ["monitoring", "all"]
     restart: unless-stopped
+    depends_on:
+      pushgateway-init:
+        condition: service_completed_successfully
     command: ["--persistence.file=/data/pushgateway.db", "--persistence.interval=1m"]
     ports:
       - "9091:9091"

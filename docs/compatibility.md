@@ -81,3 +81,20 @@ Tất cả image đều được pin theo digest.
 - Dữ liệu nguồn được giữ thành chuỗi `raw_json`, nên cơ chế normalize của dlt không làm mất cấu trúc lồng nhau.
 - Đã kiểm chứng: đọc lại object thì `sha256(raw_json)` trùng `raw_sha256` (`test_window_stages_exact_bytes_and_writes_manifest`).
 - `extra_placeholders` của dlt 1.32 dùng được cho layout `msm_id=`, `window_date=`, `window_hour=`.
+
+## Giai đoạn 5 (đã kiểm chứng 2026-11-19)
+
+| Thành phần | Phiên bản | Bằng chứng |
+|---|---|---|
+| Airflow | 3.4.0-python3.11 (`sha256:be92e15d…`), providers docker 4.6.1, standard 1.21.0, SDK docker 7.2.0 | DAG `ripe_atlas_hourly` chạy thành công trọn chuỗi |
+| Prometheus / Pushgateway / Grafana / node-exporter | 3.16.0 / 1.11.4 / 13.3.1 / 1.10.2 | Mọi target `up`; 8 rule cảnh báo đã thử |
+| prometheus-client | 0.26.0 | Metric job lên Pushgateway |
+| OpenMetadata server / ingestion | 2.0.8 (`sha256:df3c3fef…`) / `openmetadata-ingestion[trino,superset]==2.0.8.0` | Connector Trino và Superset đạt 100% |
+| OpenSearch | 2.19.2 (`sha256:69588c66…`) | Backend tìm kiếm của OM |
+| ruff | 0.17.5 | Lint sạch |
+| cAdvisor | v0.52.1, v0.53.0 | **Không tương thích** với Docker Desktop 29 + containerd snapshotter ("failed to identify the read-write layer"); đã bỏ |
+
+**Lưu ý tương thích đã gặp:**
+- OM 2.0.8: JWT của bot lấy qua `/users/auth-mechanism/{id}`; field `authenticationMechanism` không còn.
+- Airflow 3: `[api] base_url` phải là cổng **trong** container.
+- Trino `/metrics` cần header `X-Trino-User`.

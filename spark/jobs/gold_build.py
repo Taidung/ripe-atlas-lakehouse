@@ -68,8 +68,27 @@ def build_day(spark: SparkSession, day: date, run_id: str, dq: DqRecorder) -> st
     published = [m for m, s in silver_status.items() if s in PUBLISHED]
     log_event("gold", "day_start", ictrl_dt=str(day), silver_status=silver_status)
 
-    facts = spark.table("nessie.silver.fact_ping_result").filter((F.col("ictrl_dt") == F.lit(day)) & F.col("measurement_id").isin(published or [-1]))
-    replies = spark.table("nessie.silver.fact_ping_reply").filter((F.col("ictrl_dt") == F.lit(day)) & F.col("measurement_id").isin(published or [-1]))
+    # Đọc Silver ĐÚNG snapshot đã công bố (time travel), không đọc bản mới nhất: nếu một lần chạy Silver sau đó chết
+    # giữa hai commit (fact đã ghi, reply chưa), Gold vẫn thấy cặp fact/reply nhất quán đã qua kiểm tra.
+    # (Sự cố 2026-11-19: Silver OOM sau commit fact -> fact/reply lệch; Gold đọc bản mới nhất bị chặn bởi kiểm tra.)
+    pinned = {}
+    for table in ("nessie.silver.fact_ping_result", "nessie.silver.fact_ping_reply"):
+        snaps = {r["snapshot_id"] for r in spark.table("nessie.ops.partition_status")
+                 .filter((F.col("table_name") == table) & (F.col("ictrl_dt") == F.lit(day)) & F.col("status").isin(*PUBLISHED))
+                 .select("snapshot_id").collect()}
+        if len(snaps) > 1:
+            raise RuntimeError(f"{table} {day}: nhiều snapshot công bố khác nhau {snaps}; chạy lại silver_build cho ngày này")
+        pinned[table] = next(iter(snaps), None)
+    log_event("gold", "silver_pinned", ictrl_dt=str(day), snapshots=pinned)
+
+    def silver(table: str) -> DataFrame:
+        reader = spark.read.format("iceberg")
+        if pinned[table] is not None:
+            reader = reader.option("snapshot-id", str(pinned[table]))
+        return reader.load(table).filter((F.col("ictrl_dt") == F.lit(day)) & F.col("measurement_id").isin(published or [-1]))
+
+    facts = silver("nessie.silver.fact_ping_result")
+    replies = silver("nessie.silver.fact_ping_reply")
     members = gold.membership(spark, gold.load_probe_sets(PROBE_SET_DIR)).cache()
     cohort = gold.cohort_results(facts, members).cache()
     eligible = cohort.filter("is_eligible").cache()

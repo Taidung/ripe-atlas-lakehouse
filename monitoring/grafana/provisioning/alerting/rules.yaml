@@ -120,7 +120,9 @@ groups:
               instant: true
               # Ổ ảo Docker Desktop báo dung lượng tối đa ~1 TB (sparse vhdx) nên tỷ lệ % vô nghĩa; giới hạn thật là ổ D:
               # của host (~68,7 GB trống lúc đo 2026-11-19). Ngưỡng đề xuất: dùng > 50 GB.
-              expr: max(node_filesystem_size_bytes{mountpoint="/mnt/docker-desktop-disk"} - node_filesystem_avail_bytes{mountpoint="/mnt/docker-desktop-disk"})
+              # Dùng size - FREE (không phải avail): ext4 giữ 5% (~54 GB của đĩa ảo 1 TB) cho root; avail không tính phần
+              # đó nên size - avail báo 84,9 GB trong khi file vhdx thật 29,6 GB (false positive đo 2026-11-19).
+              expr: max(node_filesystem_size_bytes{mountpoint="/mnt/docker-desktop-disk"} - node_filesystem_free_bytes{mountpoint="/mnt/docker-desktop-disk"})
           - refId: C
             datasourceUid: __expr__
             model: {refId: C, type: threshold, expression: A, conditions: [{evaluator: {type: gt, params: [50000000000]}}]}

@@ -74,7 +74,7 @@ row_break()
 # --- Hàng 4: hạ tầng
 panel("Service health (up)", "stat", [("min by (job) (up)", "{{job}}")], w=8, thresholds=[(None, "red"), (1, "green")])
 panel("Đĩa dữ liệu Docker đã dùng", "stat",
-      [("max(node_filesystem_size_bytes{mountpoint=\"/mnt/docker-desktop-disk\"} - node_filesystem_avail_bytes{mountpoint=\"/mnt/docker-desktop-disk\"})", "used")],
+      [("max(node_filesystem_size_bytes{mountpoint=\"/mnt/docker-desktop-disk\"} - node_filesystem_free_bytes{mountpoint=\"/mnt/docker-desktop-disk\"})", "used")],
       w=8, unit="bytes", thresholds=[(None, "green"), (40e9, "orange"), (50e9, "red")], desc="Giới hạn thật là ổ D: của host; ngưỡng đề xuất 50 GB.")
 panel("RAM VM Docker đang dùng", "stat", [("1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes", "mem")], w=8,
       unit="percentunit", thresholds=[(None, "green"), (0.8, "orange"), (0.9, "red")])

@@ -52,7 +52,7 @@ class Om:
         r = self.s.put(f"{API}{path}", json=body, timeout=60)
         if not r.ok:
             raise RuntimeError(f"PUT {path} -> {r.status_code} {r.text[:400]}")
-        return r.json()
+        return r.json() if r.content else {}  # PUT /lineage trả 200 với body rỗng
 
     def patch(self, path, ops):
         if not ops:
@@ -63,10 +63,9 @@ class Om:
         return r.json()
 
     def bot_jwt(self) -> str:
+        # OM 2.0.8: field authenticationMechanism không còn trên /users; JWT lấy qua /users/auth-mechanism/{id} (đã kiểm chứng).
         bot = self.get("/bots/name/ingestion-bot")
-        user = self.get(f"/users/name/{bot['botUser']['name']}", fields="authenticationMechanism")
-        mech = user.get("authenticationMechanism") or self.get(f"/users/auth-mechanism/{user['id']}")
-        return mech["config"]["JWTToken"]
+        return self.get(f"/users/auth-mechanism/{bot['botUser']['id']}")["config"]["JWTToken"]
 
 
 def workflow_config(source: dict, jwt: str) -> dict:
@@ -192,8 +191,10 @@ def verify(om: Om) -> dict:
 def main() -> int:
     om = Om()
     jwt = om.bot_jwt()
-    print("== Trino metadata"); run_workflow(workflow_config(trino_source(), jwt))
-    print("== Superset metadata"); run_workflow(workflow_config(superset_source(), jwt))
+    print("== Trino metadata")
+    run_workflow(workflow_config(trino_source(), jwt))
+    print("== Superset metadata")
+    run_workflow(workflow_config(superset_source(), jwt))
     print("== Enrichment", enrich(om))
     containers = ensure_containers(om)
     print("== Declared lineage edges", add_lineage(om, containers))
