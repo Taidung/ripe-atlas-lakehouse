@@ -304,6 +304,7 @@ Không đổi hành vi. Kiểm chứng (2026-11-19):
   - Silver `published_with_warnings` với số dòng giống hệt lần chạy trước khi dọn, cùng một cảnh báo `rtt_ms`.
   - Gold `published`, 7 mart đúng từng số dòng (74 / 5.786 / 20.333 / 25.316 / 247.479 / 13.319 / 192).
   - `gold_crosscheck` **PASS**, sai số percentile lớn nhất 0,93%.
+- CI GitHub run 44529234412 (commit `aeb3546`): **success**. Cả `lint-and-unit` (đã có luật E501) và `spark-tests` đều pass.
 
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
