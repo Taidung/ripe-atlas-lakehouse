@@ -30,8 +30,13 @@ Các lệnh dưới đây chạy từ thư mục gốc repo. Trên Git Bash (Win
 - Task Silver/Gold thất bại với mã thoát 2 nghĩa là **lỗi chất lượng critical**; task này không retry.
 - Mỗi job Spark và mỗi lệnh ingestion (`metadata`, `results`, `backfill`, `incremental`) nhận `--run-type`
   (`scheduled`, `reconcile`, `backfill`, `repair`, `manual`). Không truyền thì: `incremental` = `scheduled`,
-  `backfill` = `backfill`, còn lại (kể cả `metadata` chạy tay) = `manual`. DAG luôn truyền rõ: hourly và
-  daily_metadata = `scheduled`, reconcile = `reconcile`, backfill = `backfill`.
+  `backfill` = `backfill`, còn lại (kể cả `metadata` chạy tay) = `manual`. DAG luôn truyền rõ (operator Spark
+  bắt buộc có `run_type`):
+  - hourly: ingest, bronze_results, silver, gold = `scheduled`;
+  - daily_metadata: ingest_metadata, bronze_metadata = `scheduled`; `silver_repair_unknown`, `gold_recent_days` = `repair`;
+  - reconcile = `reconcile`; backfill = `backfill`; maintenance = `scheduled`.
+  Mỗi (stage, `scheduled`) chỉ thuộc một task. Nếu hai task dùng chung, lần thành công của task này che lần thất bại
+  của task kia trong cảnh báo "job lỗi liên tiếp".
   Metric được đẩy vào group Pushgateway riêng theo `run_type`, và group đó giữ giá trị tới lần chạy cùng loại kế tiếp.
   Vì vậy **mọi cảnh báo dựa trên số liệu job chỉ xét `run_type="scheduled"`**: job lỗi liên tiếp, DQ critical,
   quarantine, độ đầy đủ, API 429. Một lần backfill hay chạy tay (kể cả lần cố ý bị chặn) không làm cảnh báo bắn mãi,

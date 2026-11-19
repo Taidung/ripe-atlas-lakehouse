@@ -100,10 +100,12 @@ class HourlyIngestionOperator(IngestionOperator):
 class SparkJobOperator(BaseOperator):
     template_fields: Sequence[str] = ("arguments",)
 
-    def __init__(
-        self, *, script: str, arguments: list[str] | None = None, hourly_range: bool = False, run_type: str = "scheduled", **kwargs
-    ):
-        """run_type: nhãn metric của job (scheduled | backfill | reconcile | repair | manual), xem lakehouse/common.py."""
+    def __init__(self, *, script: str, run_type: str, arguments: list[str] | None = None, hourly_range: bool = False, **kwargs):
+        """run_type (bắt buộc): nhãn metric của job (scheduled | backfill | reconcile | repair | manual), xem lakehouse/common.py.
+
+        Không có mặc định: chỉ lần chạy chính của một stage được gắn `scheduled`. Hai task dùng chung (stage, run_type) thì
+        dùng chung group Pushgateway, và lần thành công của task này sẽ che lần thất bại của task kia trong cảnh báo.
+        """
         super().__init__(**kwargs)
         self.script, self.arguments, self.hourly_range, self.run_type = script, arguments or [], hourly_range, run_type
 

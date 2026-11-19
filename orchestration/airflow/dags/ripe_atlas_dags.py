@@ -52,12 +52,25 @@ with DAG(
         hourly_range=True,
         pool=WRITER,
         execution_timeout=timedelta(minutes=20),
+        run_type="scheduled",
     )
     silver = SparkJobOperator(
-        task_id="silver", script="silver_build.py", hourly_range=True, pool=WRITER, execution_timeout=timedelta(minutes=30), retries=1
+        task_id="silver",
+        script="silver_build.py",
+        hourly_range=True,
+        pool=WRITER,
+        execution_timeout=timedelta(minutes=30),
+        retries=1,
+        run_type="scheduled",
     )
     gold = SparkJobOperator(
-        task_id="gold", script="gold_build.py", hourly_range=True, pool=WRITER, execution_timeout=timedelta(minutes=30), retries=1
+        task_id="gold",
+        script="gold_build.py",
+        hourly_range=True,
+        pool=WRITER,
+        execution_timeout=timedelta(minutes=30),
+        retries=1,
+        run_type="scheduled",
     )
     ingest >> bronze >> silver >> gold
 
@@ -81,6 +94,7 @@ with DAG(
         arguments=["--entity", "metadata"],
         pool=WRITER,
         execution_timeout=timedelta(minutes=20),
+        run_type="scheduled",  # stage bronze_metadata chỉ có lần chạy này
     )
     repair = SparkJobOperator(
         task_id="silver_repair_unknown",
@@ -89,6 +103,7 @@ with DAG(
         pool=WRITER,
         execution_timeout=timedelta(minutes=60),
         retries=1,
+        run_type="repair",  # không dùng chung group với Silver hằng giờ
     )
     gold_recent = SparkJobOperator(
         task_id="gold_recent_days",
@@ -97,6 +112,7 @@ with DAG(
         pool=WRITER,
         execution_timeout=timedelta(minutes=45),
         retries=1,
+        run_type="repair",  # không dùng chung group với Gold hằng giờ
     )
     meta >> meta_bronze >> repair >> gold_recent
 
@@ -195,7 +211,11 @@ with DAG(
     tags=["ripe-atlas", "daily", "maintenance"],
 ) as maintenance:
     compact = SparkJobOperator(
-        task_id="iceberg_compaction", script="iceberg_maintenance.py", pool=WRITER, execution_timeout=timedelta(hours=2)
+        task_id="iceberg_compaction",
+        script="iceberg_maintenance.py",
+        pool=WRITER,
+        execution_timeout=timedelta(hours=2),
+        run_type="scheduled",
     )
     orphans = IngestionOperator(
         task_id="staging_orphan_cleanup",

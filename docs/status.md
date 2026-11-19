@@ -367,6 +367,15 @@ Kiểm chứng trên Prometheus/Grafana đang chạy:
 - Đã xoá group Pushgateway `{stage=metadata, run_type=scheduled, outcome=success}` do lần chạy tay trước đây bị gắn nhầm nhãn.
 - CI GitHub run 44546172283 (commit `690c2b8`): **success** (`lint-and-unit`, `spark-tests`).
 
+## Phiên 2026-11-19: Task repair của daily_metadata
+
+- `silver_repair_unknown` và `gold_recent_days` (DAG daily_metadata) không truyền `run_type`, nên nhận mặc định `scheduled`
+  và đẩy metric vào cùng group với Silver/Gold hằng giờ. Lần repair thành công lúc 00:20 cập nhật mốc "thành công gần nhất"
+  của group đó, nên che mất lỗi liên tục của Silver/Gold hằng giờ trong cảnh báo `ripe-job-failing`.
+- Sửa: hai task này mang `run_type="repair"`; `SparkJobOperator` bỏ giá trị mặc định, mọi task phải ghi rõ `run_type`.
+  Đã rà lại DAG: mỗi (stage, `scheduled`) chỉ thuộc đúng một task.
+- Chưa kiểm chứng trên Airflow đang chạy (Airflow tắt để tiết kiệm RAM); đã kiểm tra cú pháp, lint, và rà các lời gọi operator bằng AST.
+
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
 | Tiêu chí | Trạng thái |
