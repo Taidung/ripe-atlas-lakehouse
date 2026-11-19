@@ -399,6 +399,7 @@ Chạy tuần tự từng nhóm service (tạm dừng Spark và monitoring để
   - mọi đường dẫn `via:` trỏ tới file có thật sau refactor.
 - RAM: Windows thấp nhất 350 MB khi Trino + Superset chạy; không chạm pagefile nặng. Đã bật lại Spark và monitoring;
   dữ liệu Pushgateway còn nguyên.
+- CI GitHub run 44551323554 (commit `4d63794`): **success** (`lint-and-unit`, `spark-tests`).
 
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
