@@ -350,6 +350,7 @@ Kiểm chứng trên Prometheus/Grafana đang chạy:
 - Biểu thức DQ cũ cho `silver = 2`, tức sẽ bắn, do metric `manual` của lần test cố ý bị chặn. Biểu thức mới không có kết quả.
 - Sau khi restart Grafana, cả 5 rule số liệu job đã lọc `scheduled`; rule DQ critical ở trạng thái `inactive`.
 - Hai cảnh báo đang bắn là đúng thực tế: Gold trễ (Airflow đang tắt) và service không phản hồi (Trino/Superset/Airflow đang tắt).
+- CI GitHub run 44543534964 (commit `e5bfc45`): **success** (`lint-and-unit`, `spark-tests`).
 
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
