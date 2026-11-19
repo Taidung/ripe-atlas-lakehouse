@@ -267,7 +267,7 @@ Kiểm chứng sau refactor (2026-11-19):
   - `gold_build`: `published`
   - `gold_crosscheck`: **PASS**, sai số percentile lớn nhất 0,93%.
 - CI GitHub run 44508370312 (commit `f992573`): **success**. Gồm job `lint-and-unit` (ruff, Compose, JSON/YAML, unit test) và `spark-tests` (build image, chạy `tests/transformation` + `tests/quality`).
-- Chưa chạy lại Superset `provision.py` và OpenMetadata ingestion sau khi đổi mount `config/metrics.json`; mới kiểm tra cú pháp và cấu hình Compose.
+- Superset `provision.py` và OpenMetadata đã được kiểm chứng lại sau đổi mount `config/metrics.json`: xem mục "Kiểm chứng nốt trước báo cáo".
 
 ## Phiên 2026-11-19: Dọn code (clean code)
 
@@ -377,6 +377,29 @@ Kiểm chứng trên Prometheus/Grafana đang chạy:
 - Chưa kiểm chứng trên Airflow đang chạy (Airflow tắt để tiết kiệm RAM); đã kiểm tra cú pháp, lint, và rà các lời gọi operator bằng AST.
 - CI GitHub run 44547418462 (commit `9c02947`): **success** (`lint-and-unit`, `spark-tests`).
 
+## Phiên 2026-11-19: Kiểm chứng nốt trước báo cáo
+
+Chạy tuần tự từng nhóm service (tạm dừng Spark và monitoring để có RAM), có script theo dõi RAM chạy song song.
+
+- **Airflow 3.4.0:** nạp 5 DAG, không lỗi import. Nạp DagBag như scheduler và in `run_type` của từng task:
+  - hourly: `scheduled`
+  - daily_metadata: `scheduled` cho metadata và Bronze, `repair` cho `silver_repair_unknown` và `gold_recent_days`
+  - reconcile: `reconcile` (cả phần ingest); backfill: `backfill`; maintenance: `scheduled`
+  - Mỗi (stage, `scheduled`) chỉ thuộc một task.
+- **Superset:**
+  - `provision.py` chạy với `config/metrics.json` mount ở `/app/config`: 9 dataset, 23 chart, dashboard id 1.
+  - 22/22 chart chạy thử truy vấn OK; chart bản đồ dùng plugin cũ, chỉ kiểm tra được bằng trình duyệt.
+  - Đã xuất lại `serving/superset/export/global_network_quality.zip`.
+  - `verify_filters.py` **10/10 PASS** (filter, rollup giờ → ngày, timezone, p95 khớp `rtt_count`).
+- **OpenMetadata:** chưa chạy được bản đầy đủ. Bản đầy đủ cần OM server, OpenSearch và Postgres (≈ 2,1 GB) cùng
+  Trino và Superset, trong khi Windows chỉ còn ≈ 0,4–0,5 GB trống lúc đó. Đã kiểm chứng phần thay đổi trong refactor
+  bằng container `om-ingestion`, không cần OM server:
+  - đọc được `/app/config/metrics.json`, sinh 28 thuật ngữ glossary;
+  - `catalog.yaml` có 23 cạnh lineage, khớp bằng chứng giai đoạn 5;
+  - mọi đường dẫn `via:` trỏ tới file có thật sau refactor.
+- RAM: Windows thấp nhất 350 MB khi Trino + Superset chạy; không chạm pagefile nặng. Đã bật lại Spark và monitoring;
+  dữ liệu Pushgateway còn nguyên.
+
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
 | Tiêu chí | Trạng thái |
@@ -387,7 +410,7 @@ Kiểm chứng trên Prometheus/Grafana đang chạy:
 | Trino truy vấn được cùng dữ liệu Spark ghi | Đạt (smoke test, cùng snapshot) |
 | Superset có dashboard hoạt động, filter và metric được đối chiếu | Đạt (10/10) |
 | GX tạo kết quả và chặn công bố khi lỗi critical | Đạt (nhánh Nessie tạm) |
-| OpenMetadata hiển thị metadata và lineage | Đạt (kiểm tra qua API; chưa chụp ảnh UI) |
+| OpenMetadata hiển thị metadata và lineage | Đạt ở giai đoạn 5 (kiểm tra qua API; chưa chụp ảnh UI). Sau refactor mới kiểm chứng phần đọc cấu hình, chưa chạy lại bản đầy đủ vì thiếu RAM |
 | Grafana có metric thật, cảnh báo đã thử | Đạt |
 | CI có workflow chạy được và có bằng chứng | Đạt cho `ci.yml`: run 44488710698 (commit d65e29b) xanh cả `lint-and-unit` và `spark-tests` trên GitHub. `integration.yml` chưa chạy |
 | Báo cáo chỉ dùng số đo thật | Đạt (`docs/test-report.md`) |
