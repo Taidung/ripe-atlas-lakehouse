@@ -96,7 +96,10 @@ Mọi số liệu dưới đây là **số đo thật** trong ngày 2026-11-18/1
 
 ## 7. Chưa kiểm thử hoặc còn thiếu
 
-- **Workflow GitHub Actions chưa chạy trên GitHub** (cần push lên remote, chờ chủ đồ án đồng ý). Các bước đã được chạy tương đương trên máy local.
+- **`ci.yml` đã xanh trên GitHub** (run 44488710698). Trước đó có 2 lỗi thật, đã sửa:
+  - runner nhận HTTP lỗi từ Maven Central → thêm retry và mirror;
+  - entrypoint tương đối và thiếu `spark-defaults.conf` khi `docker run`.
+- `integration.yml` chưa chạy trên GitHub.
 - **Chưa chạy toàn bộ stack cùng lúc:** RAM 15,8 GB không đủ khi bật mọi profile. Các profile đã được kiểm thử tuần tự.
 - **Chưa đo một ngày đầy đủ ở chế độ analysis** (~5,2 triệu result/ngày). Bộ nhớ Silver cho quy mô đó cần đo lại; có thể phải tính theo (ngày × measurement).
 - **Nessie GC** (dọn snapshot và file cũ) chưa triển khai.

@@ -239,12 +239,12 @@ Bằng chứng chi tiết: `docs/test-report.md`.
 | GX tạo kết quả và chặn công bố khi lỗi critical | Đạt (nhánh Nessie tạm) |
 | OpenMetadata hiển thị metadata và lineage | Đạt (kiểm tra qua API; chưa chụp ảnh UI) |
 | Grafana có metric thật, cảnh báo đã thử | Đạt |
-| CI có workflow chạy được và có bằng chứng | **Một phần:** workflow đã viết, các bước đã chạy tương đương ở local, chưa có lần chạy trên GitHub |
+| CI có workflow chạy được và có bằng chứng | Đạt cho `ci.yml`: run 44488710698 (commit d65e29b) xanh cả `lint-and-unit` và `spark-tests` trên GitHub. `integration.yml` chưa chạy |
 | Báo cáo chỉ dùng số đo thật | Đạt (`docs/test-report.md`) |
 
 ## Còn lại và đề xuất tiếp theo
 
-1. Push lên GitHub để chạy `ci.yml` (cần chủ đồ án đồng ý), rồi chạy `integration.yml` thủ công.
+1. ~~Chạy `ci.yml` trên GitHub~~: đã xanh. Còn lại: chạy `integration.yml` thủ công.
 2. Chọn cohort cho lịch chạy chính (`PROBE_SET_VERSION=strat-k2-c100-v1`) và chạy ≥ 24 giờ, để đo tải thật một ngày ở chế độ analysis (bộ nhớ Silver, thời gian chạy).
 3. Ghi nhiều bảng nguyên tử bằng nhánh Nessie (ghi trên nhánh, kiểm tra, merge vào `main`); triển khai Nessie GC.
 4. Tên quốc gia/ASN: cần duyệt nguồn tham chiếu.
