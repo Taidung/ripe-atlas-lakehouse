@@ -1,9 +1,26 @@
 [project]
 name = "ripe-atlas-lakehouse"
 version = "0.1.0"
-description = "Add your description here"
+description = "Batch lakehouse pipeline for RIPE Atlas built-in ping measurements to K-root and F-root"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "dlt[filesystem]>=1.32.0",
+    "dlt[filesystem]==1.32.0",
+    "requests==2.34.2",
+    "s3fs==2026.9.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest==8.3.5",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+pythonpath = ["."]
+markers = [
+    "live: gọi RIPE Atlas API thật (chạy riêng, không chạy trong PR checks)",
+    "integration: cần stack Docker đang chạy",
+    "spark: chạy trong container Spark",
+]
+addopts = "-m 'not live and not integration'"

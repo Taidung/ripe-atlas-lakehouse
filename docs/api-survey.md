@@ -24,9 +24,24 @@ Khớp với trang built-in measurements [Doc]. IPv6 chỉ chạy trên probe c�
 | Pagination | **Không có**. `page_size=10` bị bỏ qua: 61 giây trả 3.707 bản ghi | [Đo] + [Doc] "None of the generic query parameters (fields, page, etc.) work on the results endpoint" |
 | `format` | `json` (một mảng) và `txt` (mỗi dòng một JSON, phù hợp stream) | [Doc] + [Đo] |
 | `probe_ids` | Danh sách id phân tách bằng dấu phẩy, có thể dùng khoảng | [Doc] + [Đo] |
-| `public_only` | `true`/`1` đều được chấp nhận. Trên 1001, 5 phút: `true`=17.907, `false`=17.908 (lệch 1 do dữ liệu đến thêm giữa 2 request) | [Đo] — với request ẩn danh gần như không có khác biệt |
+| `public_only` | `true`/`1` đều được chấp nhận. **Chỉ có tác dụng khi request có `probe_ids`.** Chi tiết ở mục "Thí nghiệm `public_only`" ngay dưới bảng | [Đo] |
 | Rate limit | Không có header `X-RateLimit-*`/`Retry-After` trong các response quan sát. Doc chỉ nêu HTTP 429 và khuyên back-off, không có con số | [Đo] + [Doc] |
-| Late data | Mỗi result có `stored_timestamp`. Trong mẫu, độ trễ `stored_timestamp - timestamp` khoảng 30–130 giây | [Đo] (chưa đo phân phối đầy đủ) |
+| Late data | Mỗi result có `stored_timestamp`. Trên 44.340 result (200 probe dev, 22:00–02:00 UTC ngày 18–19/11/2026), độ trễ `stored_timestamp - timestamp`: p50 64 s, p95 118 s, p99 497 s, **max 8.120 s (≈ 2,25 giờ)** | [Đo] qua Trino trên `bronze.ping_result_raw` |
+
+### Thí nghiệm `public_only` [Đo, 2026-11-19]
+
+1. **Không có `probe_ids`** (cửa sổ 01:45–02:00 UTC, cả 4 measurement):
+   - Có 14.444 probe trả kết quả. Theo `/probes/`, **1.009 probe trong số đó có `is_public=false`**.
+   - Lần đo trước trên 1001 (5 phút) cho số kết quả gần như bằng nhau: `public_only=true` → 17.907, `false` → 17.908. Lệch 1 do có kết quả mới đến giữa 2 request.
+   - Kết luận: khi không có `probe_ids`, `public_only` gần như không lọc gì.
+2. **Có `probe_ids`**, gồm 5 probe private (30, 72, 80, 91, 105), measurement 1001:
+   - `public_only=true` → **0** kết quả.
+   - Bỏ `public_only` → **19** kết quả.
+
+**Policy:** ingestion luôn gửi `probe_ids` lấy từ probe set, kèm `public_only=true`.
+- Probe set chỉ gồm probe có `is_public=true` lúc tạo, nên hai bộ lọc chồng lên nhau.
+- Probe chuyển sang private sau khi tạo probe set sẽ bị `public_only` loại khỏi kết quả.
+- Silver vẫn đối chiếu `is_public` theo snapshot metadata và ghi rõ mức độ chắc chắn.
 
 **Quy ước triển khai:** cửa sổ logic `[S, E)` gọi API với `start=S&stop=E-1`, rồi lọc lại `S <= timestamp < E` phía client. Hai biên inclusive nên không có result nào rơi vào 2 cửa sổ liền kề. Code hiện có gọi `start=S-1&stop=E` rồi lọc, cũng đúng nhưng lấy thừa.
 

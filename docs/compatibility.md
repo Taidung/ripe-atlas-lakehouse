@@ -13,7 +13,8 @@ Tất cả image đều được pin theo digest.
 
 | Thành phần | Phiên bản | Image / digest | Trạng thái | Bằng chứng |
 |---|---|---|---|---|
-| Spark | 3.5.5, Scala 2.12.18, OpenJDK 17.0.14, Python 3.10.16, PySpark 3.5.5 | `tabulario/spark-iceberg@sha256:790a72e7…` | Đã đo | `spark-submit --version` trong container |
+| Spark | 3.5.5, Scala 2.12.18, OpenJDK 17.0.14, Python 3.10.16, PySpark 3.5.5 | Image `ripe-atlas-spark:3.5.5-iceberg1.8.1`, build từ `tabulario/spark-iceberg@sha256:790a72e7…` + 11 jar S3A (pin SHA-256) + pytest 8.3.5 | Đã kiểm chứng | `spark-submit --version`; job đọc s3a mà không tải Maven (`/root/.ivy2/jars` rỗng) |
+| Ingestion | Python 3.11.18, uv 0.11.26, dlt 1.32.0, requests 2.34.2, s3fs/fsspec 2026.9.0, pytest 8.3.5 | `ripe-atlas-ingestion:0.2`, build từ `python:3.11-slim@sha256:07d48240…` | Đã kiểm chứng | 41 unit test pass trong container; ingest thật 24 job (measurement × giờ) vào SeaweedFS |
 | Iceberg (phía Spark) | `iceberg-spark-runtime-3.5_2.12-1.8.1`, `iceberg-aws-bundle-1.8.1` | có sẵn trong image Spark | Đã đo | Liệt kê `/opt/spark/jars` |
 | hadoop-aws | 3.3.4 + aws-java-sdk 1.12.262 (tải lúc chạy qua `spark.jars.packages`) | — | Chạy được, **dễ lỗi** | Xem mục "Rủi ro" |
 | Nessie | 0.108.8, version store JDBC2 trên Postgres 16 | `ghcr.io/projectnessie/nessie:0.108.8@sha256:aee5e959…` | Đã kiểm chứng | Spark và Trino cùng đọc ref `main` |
@@ -64,15 +65,19 @@ Tất cả image đều được pin theo digest.
 
 | Thành phần | Phiên bản dự kiến | Điểm cần kiểm chứng |
 |---|---|---|
-| dlt | ≥ 1.32 (uv.lock) | Pin chính xác; kiểm tra filesystem destination ghi vào SeaweedFS với `max_table_nesting=0` giữ nguyên cấu trúc nested |
 | GX Core | 1.x | Cài được trong image Spark (Python 3.10, PySpark 3.5.5) |
 | Airflow | 3.x | RAM của chế độ standalone; cách gọi `spark-submit` trong container Spark |
 | OpenMetadata | 2.0.8 | Connector Trino và Superset; OpenLineage `openlineage-spark_2.12` ≥ 1.37.0 có map được dataset Iceberg/Nessie hay không |
 | Prometheus / Pushgateway / Grafana | 3.16.0 / 1.11.4 / 13.3.1 | Cấu hình provisioning |
 
-## Rủi ro đã biết
+## Rủi ro đã xử lý
 
-**`spark.jars.packages` tải hadoop-aws và aws-sdk từ Maven Central mỗi khi container Spark được tạo lại.**
+**`spark.jars.packages` tải jar từ Maven lúc chạy.**
+- Ngày 2026-11-19, một lần tải bị `Connection refused`.
+- Đã thay bằng image Spark nhúng sẵn jar, đặt ở `/opt/spark/extra-jars` và nạp qua `spark.jars`.
+- Jar **không** được chép vào `/opt/spark/jars`, vì Jackson 2.12 sẽ xung đột với Jackson 2.15.2 của image.
 
-- Ngày 2026-11-19, một lần tải bị `Connection refused` và job đầu tiên thất bại; lần chạy lại thì đạt.
-- **Cách xử lý dự kiến:** build image Spark riêng, nhúng sẵn các jar vào image, rồi bỏ `spark.jars.packages`. Đổi lại phải build image, nhưng job sẽ chạy được offline.
+**dlt filesystem destination.**
+- Dữ liệu nguồn được giữ thành chuỗi `raw_json`, nên cơ chế normalize của dlt không làm mất cấu trúc lồng nhau.
+- Đã kiểm chứng: đọc lại object thì `sha256(raw_json)` trùng `raw_sha256` (`test_window_stages_exact_bytes_and_writes_manifest`).
+- `extra_placeholders` của dlt 1.32 dùng được cho layout `msm_id=`, `window_date=`, `window_hour=`.

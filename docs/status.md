@@ -64,19 +64,59 @@
 - Docker Desktop không khởi động được vì socket cũ `%LOCALAPPDATA%\Docker\run\dockerInference` bị kẹt.
 - Chủ đồ án đã xử lý. Volume dữ liệu còn nguyên.
 
+### Còn thiếu hoặc rủi ro (cập nhật cuối giai đoạn 1)
+
+- Đã xử lý ở giai đoạn 2: `spark.jars.packages` tải jar từ Maven mỗi lần chạy.
+- Biến tên bucket (`STAGING_BUCKET`, `WAREHOUSE_BUCKET`) mới chỉ có phía ingestion; tên bucket vẫn đang hardcode trong `s3.json` và `spark-defaults.conf`.
+- `.venv` hiện có được tạo từ WSL. Ingestion nay chạy trong container nên không còn phụ thuộc `.venv`.
+
+## Phiên 2026-11-19: Giai đoạn 2 (ingestion, staging, Bronze)
+
+### Đã làm, có bằng chứng
+
+- **Package `ingestion/`** (thay `ingestion/ingestion.py`; file cũ vẫn còn trong lịch sử git):
+  - HTTP client có retry giới hạn, exponential backoff full jitter và Retry-After; phân loại 429, 5xx và 4xx; giới hạn kích thước response.
+  - Cửa sổ `[start, end)` gọi API với `stop = end - 1` (biên inclusive đã đo).
+  - Chia probe theo nhóm 500, gọi song song tối đa 2 request.
+  - Hash bytes nguồn, hash index để khử trùng khi tải chồng lấn, manifest làm commit marker.
+  - Lệnh `metadata`, `results`, `incremental`, `backfill`, `build-probe-set`.
+- **Probe set:**
+  - `dev-200-v1`: chuyển từ code sang `config/probe_sets/`.
+  - `strat-k2-c100-v1`: sinh từ API thật, 4.324 probe v4 / 2.897 probe v6, 187/150 quốc gia, 2.596 probe nằm ở cả hai.
+- **Image:**
+  - `ingestion`: Python 3.11, dependency pin theo `uv.lock`, chạy ở profile `jobs`.
+  - Spark: nhúng sẵn jar S3A (pin SHA-256) và pytest.
+- **Bronze:**
+  - DDL `sql/bronze/001_tables.sql` gồm 5 bảng mới.
+  - Job `spark/jobs/bronze_ingest.py`: MERGE theo `record_uid`, quarantine, audit `ingest_manifest` append-only.
+- **Test:** 41 unit test offline (gồm test dlt ghi thật vào thư mục tạm) và 15 test Spark. Tất cả pass, cả trên host Windows lẫn trong container.
+- **Chạy thật trên stack** (dev-200-v1, 22:00Z 18/11 – 02:00Z 19/11):
+  - 24 job ingestion, 0 lỗi; 44.340 result.
+  - Staging khớp Bronze theo từng measurement.
+  - Business key `(measurement_id, probe_id, event_ts, af)` duy nhất trên 44.340 dòng.
+  - 0 bản ghi quarantine.
+  - Chạy lại Bronze cho kết quả `nothing_pending`; `--reprocess` cho 0 dòng mới.
+  - Overlap 3 giờ: giờ 00–01 tải lại có `staged = 0`.
+- **Phát hiện mới, đã ghi vào `docs/api-survey.md`:**
+  - `public_only` chỉ có tác dụng khi request có `probe_ids`.
+  - Độ trễ lưu của nguồn có p99 497 s, max 8.120 s.
+
+### Sửa trong phiên
+
+- **Audit `ingest_manifest`:** trước đây `--reprocess` ghi đè dòng audit của lần nạp đầu; nay là append-only. Dòng audit của lần nạp đầu tiên (`bronze-20261119T024855Z-33aad06c`) đã bị ghi đè trước khi sửa, dữ liệu Bronze không bị ảnh hưởng.
+- **Spark image:** `PYTHONPATH` trong Dockerfile từng che mất pyspark của image gốc; đã sửa để nối thêm thay vì thay thế.
+
 ### Còn thiếu hoặc rủi ro
 
-- `spark.jars.packages` tải jar từ Maven mỗi khi container Spark được tạo lại; đã có một lần bị `Connection refused`. Sẽ build image Spark có sẵn jar.
-- Biến tên bucket (`STAGING_BUCKET`, `WAREHOUSE_BUCKET`) chưa đưa vào cấu hình; tên bucket vẫn đang hardcode trong `s3.json` và `spark-defaults.conf`.
-- `.venv` hiện có được tạo từ WSL nên `uv` trên Windows không dùng lại được. Lệnh trong README chạy từ WSL hoặc Git Bash; trên Windows cần đặt biến `UV_PROJECT_ENVIRONMENT` riêng.
+- **Chưa chạy thật với `strat-k2-c100-v1`** (≈ 4.600 probe). Volume/giờ và runtime của chế độ analysis chưa đo.
+- **Compaction, expire snapshot, dọn object mồ côi và retention staging:** mới là kế hoạch (`docs/data-contracts.md` §5).
+- **Lock giữa các run cùng cửa sổ:** chưa có. Trùng lặp được khử ở Bronze; Airflow sẽ giới hạn `max_active_runs`.
+- **Late data quá 3 giờ:** max đo được 2,25 giờ. Reconciliation định kỳ bằng `backfill` cần được lên lịch (giai đoạn 5 với Airflow).
+- **Bảng legacy** (`bronze.ping_results`, `silver.fact_ping`, …) vẫn còn; cần chủ đồ án đồng ý mới xóa.
 
-### Bước tiếp theo
+### Bước tiếp theo: giai đoạn 3 (Silver + GX)
 
-Giai đoạn 2 (ingestion và staging/Bronze):
-
-1. dlt resources: retry/backoff có jitter, xử lý 429/`Retry-After`, giới hạn concurrency.
-2. Manifest cho mỗi cửa sổ và checkpoint theo (measurement, cửa sổ).
-3. Lựa chọn probe theo `probe_set_version`; sinh tập mẫu `strat-k2-c100-v1`.
-4. Bronze append có `observed_at`, cùng bảng audit/manifest và bảng quarantine.
-5. Chuyển test sang pytest, dùng fixture thật.
-6. Build image Spark có sẵn jar.
+1. ERD và data dictionary; `fact_ping_result`, `fact_ping_reply`, `dim_probe`/`dim_measurement` SCD2, `dim_date`/`dim_time`, dimension geography/ASN.
+2. Chọn bản ghi khi cùng business key mà payload khác; xử lý RTT `-1`, `sent = 0`, duplicate reply.
+3. GX Core: suite cho Bronze/Silver, chặn publish khi có lỗi critical.
+4. Đo chế độ analysis trên 1–2 giờ dữ liệu thật.

@@ -35,7 +35,7 @@ cp .env.example .env   # rồi thay mọi giá trị change-me
 | `docker compose --profile analytics up -d` | core + Trino + Superset | ≈ 2,9 GB |
 | `docker compose --profile all up -d` | toàn bộ service đã khai báo | — |
 
-Các profile `orchestration`, `governance` và `monitoring` sẽ được thêm ở các giai đoạn sau.
+Profile `jobs` chứa container ingestion, dùng qua `docker compose --profile jobs run --rm ingestion ...`. Các profile `orchestration`, `governance` và `monitoring` sẽ được thêm ở các giai đoạn sau.
 
 Cổng truy cập:
 
@@ -67,39 +67,66 @@ Script kiểm tra 3 điều:
 - Số dòng mọi bảng `bronze` và `silver` khớp giữa Spark và Trino.
 - In `PASS` khi tất cả khớp.
 
-## 4. Ingestion và xử lý (code hiện có, sẽ refactor ở giai đoạn 2–3)
+## 4. Ingestion → staging → Bronze
 
-Metadata measurement và probe → staging:
+Job ingestion chạy trong container `ingestion` (profile `jobs`). Phạm vi probe chọn bằng biến `PROBE_SET_VERSION`:
+- `dev-200-v1` (mặc định): 200 probe cố định.
+- `strat-k2-c100-v1`: mẫu phân tầng 4.324 probe IPv4 và 2.897 probe IPv6 (ADR-0001).
+
+Có thể đặt biến này trong `.env`, hoặc truyền `--probe-set` cho từng lệnh.
 
 ```bash
-uv run python -m ingestion.ingestion
+docker compose --profile jobs build ingestion
+
+# Snapshot metadata measurement + probe (khởi tạo, sau đó hằng ngày)
+docker compose --profile jobs run --rm ingestion metadata
+
+# Một khoảng thời gian, chia theo giờ [start, end) UTC
+docker compose --profile jobs run --rm ingestion results --start 2026-11-19T00:00:00Z --end 2026-11-19T02:00:00Z
+
+# Lịch chạy hằng giờ: giờ vừa kết thúc + OVERLAP_HOURS (mặc định 3) giờ trước đó để thu dữ liệu đến muộn
+docker compose --profile jobs run --rm ingestion incremental
+
+# Backfill: cùng logic, run_type=backfill được ghi vào manifest
+docker compose --profile jobs run --rm ingestion backfill --start 2026-11-18T00:00:00Z --end 2026-11-19T00:00:00Z
+
+# Sinh probe set mới (bất biến; không ghi đè version đã có)
+docker compose --profile jobs run --rm ingestion build-probe-set --version strat-k2-c100-v2 --k 2 --cap 100 --reference-end 2026-11-20T00:00:00Z
 ```
 
-Ping results cho một giờ đã kết thúc (giờ UTC+7) → staging:
+Chạy lại cùng cửa sổ là an toàn. Record trùng nội dung (cùng SHA-256) không bị stage lại; chỉ record mới hoặc bị nguồn sửa mới được ghi.
+
+Staging → Bronze. Job chỉ đọc object có trong manifest hoàn tất, và bỏ qua manifest đã nạp:
 
 ```bash
-uv run python -m ingestion.ingestion --ping-results --window-start 2026-11-18T13:00:00+07:00
+docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_ingest.py --entity metadata
+docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_ingest.py --entity ping_result_raw --start 2026-11-19T00:00:00Z --end 2026-11-19T02:00:00Z
+
+# Xử lý lại manifest đã nạp (idempotent: 0 dòng mới nếu dữ liệu không đổi)
+docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_ingest.py --entity ping_result_raw --start 2026-11-19T00:00:00Z --end 2026-11-19T02:00:00Z --reprocess
 ```
 
-Staging → Bronze. Chạy lại cùng giờ sẽ thay partition của giờ đó:
+Hợp đồng dữ liệu, quy tắc quarantine và cách phục hồi: `docs/data-contracts.md`.
+
+### Test
 
 ```bash
-docker compose exec -T spark-iceberg spark-submit /opt/spark/jobs/staging_to_bronze.py
-docker compose exec -T spark-iceberg spark-submit /opt/spark/jobs/staging_to_bronze.py --window-start 2026-11-18T13:00:00+07:00
+# Unit test offline (không cần mạng hay Docker; dlt ghi thật vào thư mục tạm)
+docker compose --profile jobs run --rm --entrypoint python ingestion -m pytest -q tests/unit
+
+# Test biến đổi Bronze trên Spark local trong container
+docker compose exec -T -w /opt/app spark-iceberg python -m pytest -q -p no:cacheprovider tests/spark
 ```
 
-Bronze → Silver. Chạy dimension trước, sau đó từng giờ:
+> Trên Git Bash (Windows), thêm `MSYS_NO_PATHCONV=1` trước các lệnh `docker compose exec` có đường dẫn `/opt/...`. Nếu không, Git Bash tự đổi đường dẫn thành `C:/Program Files/Git/opt/...`.
+
+### Pipeline cũ (legacy, giữ để đối chiếu)
+
+`spark/jobs/staging_to_bronze.py` và `spark/jobs/bronze_to_silver.py` vẫn chạy được với các bảng `bronze.ping_results`, `silver.fact_ping`. Chúng sẽ được thay ở giai đoạn 3.
 
 ```bash
-docker compose exec -T spark-iceberg spark-submit /opt/spark/jobs/bronze_to_silver.py
-docker compose exec -T spark-iceberg spark-submit /opt/spark/jobs/bronze_to_silver.py --window-start 2026-11-18T13:00:00+07:00
-```
-
-Unit test Spark (không ghi S3 hay Iceberg):
-
-```bash
-docker compose exec -T spark-iceberg spark-submit /opt/spark/tests/test_bronze.py
-docker compose exec -T spark-iceberg spark-submit /opt/spark/tests/test_silver.py
+docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_to_silver.py
+docker compose exec -T -w /opt/app spark-iceberg spark-submit tests/test_bronze.py
 ```
 
 ## 5. Truy vấn bằng SQL client qua Trino
@@ -116,5 +143,5 @@ Thông số kết nối, dùng được với DBeaver, DataGrip hay Trino CLI:
 Trino dùng credentials S3 chỉ đọc nên **không ghi được** dữ liệu.
 
 ```bash
-docker compose exec trino trino --execute "SELECT measurement_id, count(*) FROM nessie.silver.fact_ping GROUP BY 1"
+docker compose exec trino trino --execute "SELECT measurement_id, count(*), count(DISTINCT probe_id) FROM nessie.bronze.ping_result_raw GROUP BY 1"
 ```

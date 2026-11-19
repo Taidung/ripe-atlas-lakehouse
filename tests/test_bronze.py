@@ -10,7 +10,7 @@ except ImportError:
     SparkSession = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "spark"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "jobs"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "spark" / "jobs"))
 
 if SparkSession is not None:
     from staging_to_bronze import prepare_metadata, prepare_ping_results, validate_metadata

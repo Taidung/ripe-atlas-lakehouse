@@ -1,0 +1,107 @@
+"""CLI ingestion. Ví dụ:
+
+  python -m ingestion metadata
+  python -m ingestion results --start 2026-11-18T06:00:00Z --end 2026-11-18T08:00:00Z
+  python -m ingestion incremental                 # giờ vừa kết thúc + OVERLAP_HOURS giờ trước
+  python -m ingestion backfill --start ... --end ...
+  python -m ingestion build-probe-set --version strat-k2-c100-v1 --k 2 --cap 100 --reference-end 2026-11-19T00:00:00Z
+
+Mã thoát khác 0 nếu bất kỳ job (measurement, cửa sổ) nào thất bại; các job thành công vẫn giữ
+manifest, nên chạy lại chỉ làm lại phần thiếu (và phần chồng lấn).
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from datetime import datetime, timezone
+
+from ingestion import build_probe_set
+from ingestion.config import HttpSettings, IngestSettings, StagingSettings, parse_measurement_ids
+from ingestion.logs import log_event
+from ingestion.pipeline import IngestContext, new_run_id, run_measurement_metadata, run_probe_metadata, run_results_window
+from ingestion.probe_sets import load_probe_set
+from ingestion.staging import StagingStore
+from ingestion.windows import ensure_completed, hourly_windows, incremental_windows, parse_instant
+
+
+def make_context(args: argparse.Namespace, run_type: str) -> IngestContext:
+    settings = IngestSettings.from_env()
+    if getattr(args, "probe_set", None):
+        settings = IngestSettings(args.probe_set, settings.probe_chunk_size, settings.overlap_hours)
+    store = StagingStore.from_settings(StagingSettings.from_env())
+    probe_set = load_probe_set(settings.probe_set_version)
+    ctx = IngestContext(store, probe_set, settings, HttpSettings.from_env(), new_run_id(), run_type)
+    snapshot = f"{store.root}/_probe_sets/{probe_set.version}.json"
+    if not store.fs.exists(snapshot):
+        store.write_json(snapshot, probe_set.document)
+    return ctx
+
+
+def run_windows(ctx: IngestContext, measurement_ids: list[int], windows) -> int:
+    ensure_completed(windows, ctx.now())
+    failures = 0
+    for window in windows:
+        for msm in measurement_ids:
+            try:
+                run_results_window(ctx, msm, window)
+            except Exception as exc:  # noqa: BLE001 - ghi nhận rồi tiếp tục các job độc lập
+                failures += 1
+                log_event("ingest", "window_failed", run_id=ctx.run_id, measurement_id=msm, window=window.label,
+                          error=type(exc).__name__, message=str(exc))
+    log_event("ingest", "run_finished", run_id=ctx.run_id, run_type=ctx.run_type, jobs=len(windows) * len(measurement_ids), failures=failures)
+    return 1 if failures else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="python -m ingestion")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    meta = sub.add_parser("metadata", help="Snapshot metadata measurement + probe")
+    meta.add_argument("--probe-set")
+    meta.add_argument("--measurements")
+
+    for name in ("results", "backfill"):
+        p = sub.add_parser(name, help="Ingest ping results cho [start, end) theo từng giờ")
+        p.add_argument("--start", required=True, type=parse_instant)
+        p.add_argument("--end", required=True, type=parse_instant)
+        p.add_argument("--measurements")
+        p.add_argument("--probe-set")
+
+    inc = sub.add_parser("incremental", help="Giờ vừa kết thúc + OVERLAP_HOURS giờ chồng lấn")
+    inc.add_argument("--now", type=parse_instant, help="Mốc thời gian logic (mặc định: hiện tại)")
+    inc.add_argument("--measurements")
+    inc.add_argument("--probe-set")
+
+    bps = sub.add_parser("build-probe-set", help="Sinh tập probe phân tầng (ADR-0001)")
+    bps.add_argument("--version", required=True)
+    bps.add_argument("--k", type=int, default=2)
+    bps.add_argument("--cap", type=int, default=100)
+    bps.add_argument("--seed", default="ripe-atlas-lakehouse")
+    bps.add_argument("--reference-end", required=True, type=parse_instant)
+    bps.add_argument("--reference-minutes", type=int, default=15)
+
+    args = parser.parse_args(argv)
+
+    if args.command == "build-probe-set":
+        build_probe_set.main(args.version, args.k, args.cap, args.seed, args.reference_end, args.reference_minutes)
+        return 0
+
+    if args.command == "metadata":
+        ctx = make_context(args, "scheduled")
+        run_measurement_metadata(ctx, parse_measurement_ids(args.measurements))
+        run_probe_metadata(ctx)
+        return 0
+
+    run_type = {"results": "manual", "backfill": "backfill", "incremental": "scheduled"}[args.command]
+    ctx = make_context(args, run_type)
+    if args.command == "incremental":
+        now = args.now or datetime.now(timezone.utc)
+        windows = incremental_windows(now, ctx.settings.overlap_hours)
+    else:
+        windows = hourly_windows(args.start, args.end)
+    return run_windows(ctx, parse_measurement_ids(args.measurements), windows)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

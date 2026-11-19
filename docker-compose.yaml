@@ -1,7 +1,9 @@
 services:
   spark-iceberg:
-    # Spark 3.5.5 / Scala 2.12.18 / Java 17.0.14 / Iceberg 1.8.1 (đã đo trong container, xem docs/compatibility.md)
-    image: tabulario/spark-iceberg@sha256:790a72e744e0d09f161e1b4c7c2f79625cc598cf0476da4703e62f1f4e023460
+    # Spark 3.5.5 / Scala 2.12.18 / Java 17.0.14 / Iceberg 1.8.1 (đã đo trong container, xem docs/compatibility.md).
+    # Build từ spark/Dockerfile: base tabulario/spark-iceberg pin digest + jar S3A nhúng sẵn.
+    build: ./spark
+    image: ripe-atlas-spark:3.5.5-iceberg1.8.1
     restart: unless-stopped
     ports:
       - "8889:8888"
@@ -12,10 +14,11 @@ services:
       AWS_REGION: us-east-1
     volumes:
       - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
-      - ./spark/staging_to_bronze.py:/opt/spark/jobs/staging_to_bronze.py:ro
-      - ./spark/bronze_to_silver.py:/opt/spark/jobs/bronze_to_silver.py:ro
-      - ./tests/test_bronze.py:/opt/spark/tests/test_bronze.py:ro
-      - ./tests/test_silver.py:/opt/spark/tests/test_silver.py:ro
+      # Mã nguồn mount chỉ đọc: job ở /opt/app/spark/jobs, package dùng chung ở /opt/app/spark/lakehouse.
+      - ./spark:/opt/app/spark:ro
+      - ./sql:/opt/app/sql:ro
+      - ./tests:/opt/app/tests:ro
+      - ./config:/opt/app/config:ro
     networks:
       - lakehouse
     depends_on:
@@ -194,6 +197,34 @@ services:
           aws --endpoint-url http://s3:8333 s3api head-bucket --bucket "$$bucket" 2>/dev/null ||
             aws --endpoint-url http://s3:8333 s3api create-bucket --bucket "$$bucket"
         done
+    depends_on:
+      s3:
+        condition: service_healthy
+    networks:
+      - lakehouse
+
+  # ---------------------------------------------------------------- jobs
+  # Job ingestion chạy theo lệnh: docker compose run --rm ingestion <command> ...
+  ingestion:
+    build:
+      context: .
+      dockerfile: ingestion/Dockerfile
+    image: ripe-atlas-ingestion:0.2
+    profiles: ["jobs", "all"]
+    environment:
+      # Chỉ identity atlas-ingest (ghi staging); không truyền khóa khác.
+      S3_INGEST_ACCESS_KEY: ${S3_INGEST_ACCESS_KEY:?Set S3_INGEST_ACCESS_KEY in .env}
+      S3_INGEST_SECRET_KEY: ${S3_INGEST_SECRET_KEY:?Set S3_INGEST_SECRET_KEY in .env}
+      STAGING_S3_ENDPOINT: http://s3:8333
+      STAGING_BUCKET: staging
+      PROBE_SET_VERSION: ${PROBE_SET_VERSION:-dev-200-v1}
+      OVERLAP_HOURS: ${OVERLAP_HOURS:-3}
+      ATLAS_CONCURRENCY: ${ATLAS_CONCURRENCY:-2}
+    volumes:
+      # Mount để sinh probe set mới vào repo và dùng code mới nhất mà không cần build lại.
+      - ./config:/opt/app/config
+      - ./ingestion:/opt/app/ingestion:ro
+      - ./tests:/opt/app/tests:ro
     depends_on:
       s3:
         condition: service_healthy
