@@ -72,7 +72,9 @@ with DAG(
     tags=["ripe-atlas", "daily"],
     user_defined_macros=MACROS,
 ) as daily_metadata:
-    meta = IngestionOperator(task_id="ingest_metadata", arguments=["metadata"], pool=API, execution_timeout=timedelta(minutes=20))
+    meta = IngestionOperator(
+        task_id="ingest_metadata", arguments=["metadata", "--run-type", "scheduled"], pool=API, execution_timeout=timedelta(minutes=20)
+    )
     meta_bronze = SparkJobOperator(
         task_id="bronze_metadata",
         script="bronze_ingest.py",
@@ -111,7 +113,10 @@ with DAG(
 ) as reconcile:
     rng = ["--start", "{{ utc_date(dag_run.run_after, -1) }}T00:00:00Z", "--end", "{{ utc_date(dag_run.run_after) }}T00:00:00Z"]
     r_ingest = IngestionOperator(
-        task_id="ingest_backfill_yesterday", arguments=["backfill", *rng], pool=API, execution_timeout=timedelta(hours=2)
+        task_id="ingest_backfill_yesterday",
+        arguments=["backfill", *rng, "--run-type", "reconcile"],
+        pool=API,
+        execution_timeout=timedelta(hours=2),
     )
     r_bronze = SparkJobOperator(
         task_id="bronze",

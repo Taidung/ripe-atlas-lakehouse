@@ -94,7 +94,7 @@ class HourlyIngestionOperator(IngestionOperator):
 
     def resolve_args(self, context) -> list[str]:
         _, end = window_bounds(context)
-        return ["incremental", "--now", end]
+        return ["incremental", "--now", end, "--run-type", "scheduled"]
 
 
 class SparkJobOperator(BaseOperator):

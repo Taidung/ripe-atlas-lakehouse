@@ -28,7 +28,10 @@ Các lệnh dưới đây chạy từ thư mục gốc repo. Trên Git Bash (Win
 - DAG mới **mặc định bị tạm dừng**. Bật bằng lệnh `docker compose exec airflow airflow dags unpause <dag_id>`.
 - Mọi task ghi lakehouse đi qua pool `lakehouse_writer` (1 slot), nên backfill và lịch chạy không ghi đồng thời.
 - Task Silver/Gold thất bại với mã thoát 2 nghĩa là **lỗi chất lượng critical**; task này không retry.
-- Mỗi job Spark nhận `--run-type` (`scheduled`, `reconcile`, `backfill`, `repair`, `manual`; chạy tay mặc định `manual`).
+- Mỗi job Spark và mỗi lệnh ingestion (`metadata`, `results`, `backfill`, `incremental`) nhận `--run-type`
+  (`scheduled`, `reconcile`, `backfill`, `repair`, `manual`). Không truyền thì: `incremental` = `scheduled`,
+  `backfill` = `backfill`, còn lại (kể cả `metadata` chạy tay) = `manual`. DAG luôn truyền rõ: hourly và
+  daily_metadata = `scheduled`, reconcile = `reconcile`, backfill = `backfill`.
   Metric được đẩy vào group Pushgateway riêng theo `run_type`, và group đó giữ giá trị tới lần chạy cùng loại kế tiếp.
   Vì vậy **mọi cảnh báo dựa trên số liệu job chỉ xét `run_type="scheduled"`**: job lỗi liên tiếp, DQ critical,
   quarantine, độ đầy đủ, API 429. Một lần backfill hay chạy tay (kể cả lần cố ý bị chặn) không làm cảnh báo bắn mãi,

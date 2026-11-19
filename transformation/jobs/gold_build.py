@@ -252,12 +252,13 @@ def push_freshness(spark: SparkSession, m: StageMetrics) -> None:
     for r in cov.join(latest, ["probe_set_version", "measurement_id"]).filter(F.col("event_hour_utc") == F.col("h")).collect():
         labels = {"probe_set_version": r["probe_set_version"], "measurement_id": str(r["measurement_id"])}
         m.set("ripe_gold_latest_hour_results", "Số result của giờ gần nhất đã xử lý", r["results_total_raw"], **labels)
-        m.set(
-            "ripe_gold_latest_hour_completeness_ratio",
-            "Độ đầy đủ ước tính của giờ gần nhất đã xử lý",
-            r["results_total_raw"] / r["expected_results"] if r["expected_results"] else 0,
-            **labels,
-        )
+        if r["expected_results"]:  # expected = 0 (vd probe set không có probe IPv6): độ đầy đủ không xác định, không đẩy
+            m.set(
+                "ripe_gold_latest_hour_completeness_ratio",
+                "Độ đầy đủ ước tính của giờ gần nhất đã xử lý",
+                r["results_total_raw"] / r["expected_results"],
+                **labels,
+            )
         m.set("ripe_gold_latest_hour_timestamp_seconds", "Giờ gần nhất đã xử lý (Unix giây)", r["h"].timestamp(), **labels)
         m.set(
             "ripe_gold_latest_hour_measured", "1 nếu giờ gần nhất đã xử lý có dữ liệu", 1 if r["data_state"] == "measured" else 0, **labels

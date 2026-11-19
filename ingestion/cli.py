@@ -28,6 +28,11 @@ from ingestion.settings import HttpSettings, IngestSettings, StagingSettings, pa
 from ingestion.staging_store import StagingStore
 from ingestion.time_windows import ensure_completed, hourly_windows, incremental_windows, parse_instant
 
+# Loại lần chạy (nhãn metric và trường run_type của manifest). Cùng tập giá trị với transformation/lakehouse/common.py.
+RUN_TYPES = ("scheduled", "backfill", "reconcile", "repair", "manual")
+# Mặc định khi không truyền --run-type. Lịch chạy (Airflow) luôn truyền rõ; chạy tay không bao giờ mang nhãn scheduled.
+DEFAULT_RUN_TYPE = {"metadata": "manual", "results": "manual", "backfill": "backfill", "incremental": "scheduled"}
+
 
 def make_context(args: argparse.Namespace, run_type: str) -> IngestContext:
     settings = IngestSettings.from_env()
@@ -81,6 +86,11 @@ def main(argv: list[str] | None = None) -> int:
     scope = argparse.ArgumentParser(add_help=False)
     scope.add_argument("--measurements", help="Danh sách measurement_id, phân tách bằng dấu phẩy (mặc định: cả 4)")
     scope.add_argument("--probe-set", help="probe_set_version (mặc định: biến PROBE_SET_VERSION)")
+    scope.add_argument(
+        "--run-type",
+        choices=RUN_TYPES,
+        help="Nhãn metric của lần chạy (mặc định: incremental=scheduled, backfill=backfill, còn lại manual)",
+    )
 
     sub.add_parser("metadata", parents=[scope], help="Snapshot metadata measurement + probe")
 
@@ -116,8 +126,9 @@ def main(argv: list[str] | None = None) -> int:
         run_cleanup(StagingStore.from_settings(StagingSettings.from_env()), args.orphan_min_age_hours, args.apply)
         return 0
 
+    run_type = args.run_type or DEFAULT_RUN_TYPE[args.command]
     if args.command == "metadata":
-        ctx = make_context(args, "scheduled")
+        ctx = make_context(args, run_type)
         ok = False
         try:
             run_measurement_metadata(ctx, parse_measurement_ids(args.measurements))
@@ -127,10 +138,9 @@ def main(argv: list[str] | None = None) -> int:
             ctx.close()
             url = os.environ.get("PUSHGATEWAY_URL")
             if url:
-                metrics.push_outcome(url, "metadata", "scheduled", ok, time.time())
+                metrics.push_outcome(url, "metadata", run_type, ok, time.time())
         return 0
 
-    run_type = {"results": "manual", "backfill": "backfill", "incremental": "scheduled"}[args.command]
     ctx = make_context(args, run_type)
     if args.command == "incremental":
         now = args.now or datetime.now(timezone.utc)

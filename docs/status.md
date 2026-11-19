@@ -352,6 +352,21 @@ Kiểm chứng trên Prometheus/Grafana đang chạy:
 - Hai cảnh báo đang bắn là đúng thực tế: Gold trễ (Airflow đang tắt) và service không phản hồi (Trino/Superset/Airflow đang tắt).
 - CI GitHub run 44543534964 (commit `e5bfc45`): **success** (`lint-and-unit`, `spark-tests`).
 
+## Phiên 2026-11-19: run_type cho ingestion, completeness khi kỳ vọng bằng 0
+
+- Lệnh `metadata` gắn cứng `run_type=scheduled` (cả manifest lẫn metric), nên một lần chạy tay lỗi sẽ được tính vào
+  cảnh báo của lịch chính. Đã sửa: mọi lệnh ingestion nhận `--run-type`, mặc định `manual` cho `metadata`/`results`.
+  DAG truyền `scheduled` cho metadata và incremental, `reconcile` cho phần ingest của DAG reconcile (trước đây
+  mang nhãn `backfill`, lệch với các job Spark cùng DAG).
+- `push_freshness` đẩy completeness = 0 khi `expected_results = 0` (probe set không có probe của af đó). Đã sửa: không
+  đẩy giá trị cho nhóm này.
+- Kiểm chứng:
+  - 7 test mới cho nhãn mặc định và giá trị truyền vào; unit test ingestion 55/55.
+  - Chạy thật `metadata` không truyền `--run-type`: Pushgateway ghi group `{stage=metadata, run_type=manual}`.
+  - `gold_build` 2026-11-19 chạy lại `published`, số dòng không đổi.
+- Còn lại trên Pushgateway: group `{stage=metadata, run_type=scheduled}` do lần chạy tay trước đây bị gắn nhầm nhãn.
+  Không che được lỗi thật (rule chỉ bắn khi lần thất bại mới hơn lần thành công), nhưng là dữ liệu sai.
+
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
 | Tiêu chí | Trạng thái |

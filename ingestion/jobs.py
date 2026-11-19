@@ -63,7 +63,7 @@ class IngestContext:
     settings: IngestSettings
     http_settings: HttpSettings
     run_id: str
-    run_type: str = "scheduled"  # scheduled | backfill | manual
+    run_type: str = "scheduled"  # scheduled | backfill | reconcile | repair | manual (xem cli.RUN_TYPES)
     http_factory: Callable[[], Any] | None = None
     now: Callable[[], datetime] = field(default=lambda: datetime.now(timezone.utc))
     _idle_clients: queue.SimpleQueue = field(default_factory=queue.SimpleQueue, repr=False)
