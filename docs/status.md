@@ -8,7 +8,7 @@
 - Nessie 0.108.8 lưu trên Postgres 16; Spark chạy bằng image `tabulario/spark-iceberg`.
 - dlt ingest metadata measurement/probe và ping results theo giờ UTC+7 cho 200 probe cố định.
 
-### Chưa commit (công việc của chủ đồ án, phiên này KHÔNG sửa)
+### Chưa commit lúc bắt đầu phiên (công việc của chủ đồ án; sau đó đã commit nguyên trạng ở `3cf93c5`)
 
 - `spark/staging_to_bronze.py`, `spark/bronze_to_silver.py`
 - `tests/test_bronze.py`, `tests/test_silver.py`
@@ -25,8 +25,7 @@
 ### Chưa làm hoặc chưa kiểm chứng
 
 - Chưa đo khối lượng 24h và phân phối late arrival; chưa kiểm tra tính duy nhất của business key trên 24h.
-- Chưa kiểm chứng Trino ↔ Nessie, GX trong image Spark, OpenMetadata lineage.
-- Chưa có code mới cho giai đoạn 1–5.
+- Chưa kiểm chứng GX trong image Spark và OpenMetadata lineage. (Trino ↔ Nessie đã kiểm chứng ở phiên 2026-11-19.)
 
 ### Quyết định của chủ đồ án (2026-11-19)
 
@@ -41,10 +40,43 @@
 3. Phần Bronze/Silver chưa commit: **đã commit nguyên trạng** (`3cf93c5`) trước khi refactor.
 4. Điều phối: **Airflow standalone** (LocalExecutor), đặt ở profile `orchestration` riêng.
 
+## Phiên 2026-11-19: Giai đoạn 1 (hạ tầng core và compatibility)
+
+### Đã làm, có bằng chứng (chi tiết ở `docs/compatibility.md`)
+
+- **Pin image theo digest:** Spark-Iceberg, SeaweedFS 4.53, Nessie 0.108.8, Postgres 16, aws-cli, Trino 484, Superset 6.1.0.
+- **Compose profiles:** không chọn profile thì chạy core; profile `analytics` thêm Trino, Superset và `superset-db`; profile `all` chạy tất cả.
+- **Trino 484:**
+  - Catalog `nessie`, cấu hình `iceberg.catalog.type=nessie`.
+  - Dùng credentials S3 chỉ đọc; đã thử ghi và bị từ chối.
+- **Superset 6.1.0:**
+  - Image build thêm driver `trino` và `psycopg2`.
+  - Script khởi tạo idempotent: tạo admin và kết nối Trino.
+  - Truy vấn SQL Lab qua REST API trả về đúng 22.361 dòng.
+- **`scripts/smoke_compat.sh` đạt PASS:**
+  - Cùng snapshot id giữa Spark và Trino.
+  - 6 bảng bronze/silver có số dòng khớp nhau.
+- **RAM core + analytics:** ≈ 2,9 GB.
+- **Tài liệu:** thêm `.env.example`, viết lại README bằng tiếng Việt, thêm `.gitattributes` để giữ LF cho file `.sh` và `.properties`.
+
+### Sự cố trong phiên
+
+- Docker Desktop không khởi động được vì socket cũ `%LOCALAPPDATA%\Docker\run\dockerInference` bị kẹt.
+- Chủ đồ án đã xử lý. Volume dữ liệu còn nguyên.
+
+### Còn thiếu hoặc rủi ro
+
+- `spark.jars.packages` tải jar từ Maven mỗi khi container Spark được tạo lại; đã có một lần bị `Connection refused`. Sẽ build image Spark có sẵn jar.
+- Biến tên bucket (`STAGING_BUCKET`, `WAREHOUSE_BUCKET`) chưa đưa vào cấu hình; tên bucket vẫn đang hardcode trong `s3.json` và `spark-defaults.conf`.
+- `.venv` hiện có được tạo từ WSL nên `uv` trên Windows không dùng lại được. Lệnh trong README chạy từ WSL hoặc Git Bash; trên Windows cần đặt biến `UV_PROJECT_ENVIRONMENT` riêng.
+
 ### Bước tiếp theo
 
-Giai đoạn 1:
+Giai đoạn 2 (ingestion và staging/Bronze):
 
-- Pin image theo bảng compatibility.
-- Tách Compose profiles.
-- Thêm Trino, Superset và smoke test Spark → Nessie → Trino.
+1. dlt resources: retry/backoff có jitter, xử lý 429/`Retry-After`, giới hạn concurrency.
+2. Manifest cho mỗi cửa sổ và checkpoint theo (measurement, cửa sổ).
+3. Lựa chọn probe theo `probe_set_version`; sinh tập mẫu `strat-k2-c100-v1`.
+4. Bronze append có `observed_at`, cùng bảng audit/manifest và bảng quarantine.
+5. Chuyển test sang pytest, dùng fixture thật.
+6. Build image Spark có sẵn jar.

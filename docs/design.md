@@ -85,7 +85,9 @@ Với 13 GB trống trên C:, chế độ toàn cầu chỉ giữ được **≈
 
 Tổng ≈ 13–15 GB, **vượt 8,2 GB** Docker được cấp. Lệnh "chạy đầy đủ" (`--profile all`) sẽ có, nhưng trên máy này cần nâng giới hạn RAM của Docker hoặc chạy `governance` riêng (tắt `analytics`/`orchestration` khi ingest metadata OpenMetadata).
 
-## 5. Compatibility matrix (v0 — sẽ chốt ở giai đoạn 1)
+## 5. Compatibility matrix (v0)
+
+> Bảng dưới đây là bản khảo sát ban đầu. Bản đã kiểm chứng ở giai đoạn 1 (Trino 484 và Superset 6.1.0 chạy thật, kèm bằng chứng) nằm ở `docs/compatibility.md`.
 
 | Thành phần | Phiên bản | Trạng thái |
 |---|---|---|

@@ -1,6 +1,7 @@
 services:
   spark-iceberg:
-    image: tabulario/spark-iceberg
+    # Spark 3.5.5 / Scala 2.12.18 / Java 17.0.14 / Iceberg 1.8.1 (đã đo trong container, xem docs/compatibility.md)
+    image: tabulario/spark-iceberg@sha256:790a72e744e0d09f161e1b4c7c2f79625cc598cf0476da4703e62f1f4e023460
     restart: unless-stopped
     ports:
       - "8889:8888"
@@ -24,7 +25,7 @@ services:
         condition: service_completed_successfully
 
   nessie:
-    image: ghcr.io/projectnessie/nessie:0.108.8
+    image: ghcr.io/projectnessie/nessie:0.108.8@sha256:aee5e959530b60d5e9bceb444e0b0edc8cb3cadd74a3a3e930e28591288d60da
     restart: unless-stopped
     ports:
       - "19120:19120"
@@ -47,7 +48,7 @@ services:
       - lakehouse
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     restart: unless-stopped
     environment:
       POSTGRES_DB: nessie
@@ -64,7 +65,7 @@ services:
       - lakehouse
 
   master:
-    image: chrislusf/seaweedfs
+    image: chrislusf/seaweedfs@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 # SeaweedFS 4.53
     restart: unless-stopped
     ports:
       - "9333:9333"
@@ -88,7 +89,7 @@ services:
       - lakehouse
 
   volume:
-    image: chrislusf/seaweedfs
+    image: chrislusf/seaweedfs@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 # SeaweedFS 4.53
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -118,7 +119,7 @@ services:
       - lakehouse
   
   filer:
-    image: chrislusf/seaweedfs
+    image: chrislusf/seaweedfs@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 # SeaweedFS 4.53
     restart: unless-stopped
     ports:
       - "8888:8888"
@@ -148,7 +149,7 @@ services:
       - lakehouse
   
   s3:
-    image: chrislusf/seaweedfs
+    image: chrislusf/seaweedfs@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 # SeaweedFS 4.53
     restart: unless-stopped
     ports:
       - "8333:8333"
@@ -181,7 +182,7 @@ services:
       - lakehouse
 
   init-buckets:
-    image: amazon/aws-cli:2.27.41
+    image: amazon/aws-cli:2.27.41@sha256:bc6b7bba44ce38f9604ede49c584824af919047ea03fbcc7c7610671fdef95d8
     entrypoint: ["/bin/sh", "-ec"]
     environment:
       AWS_DEFAULT_REGION: us-east-1
@@ -199,6 +200,95 @@ services:
     networks:
       - lakehouse
 
+  # ---------------------------------------------------------------- analytics
+  trino:
+    image: trinodb/trino:484@sha256:2704eb53935af5e582d63d6033e9bf99d20c325e9b0e30b1016ef59a4773979f
+    profiles: ["analytics", "all"]
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      # Trino chỉ đọc warehouse: dùng identity atlas-reader (Read/List warehouse).
+      S3_SERVING_ACCESS_KEY: ${S3_SERVING_ACCESS_KEY:?Set S3_SERVING_ACCESS_KEY in .env}
+      S3_SERVING_SECRET_KEY: ${S3_SERVING_SECRET_KEY:?Set S3_SERVING_SECRET_KEY in .env}
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog:ro
+    mem_limit: 2g
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      nessie:
+        condition: service_healthy
+      s3:
+        condition: service_healthy
+    networks:
+      - lakehouse
+
+  superset-db:
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    profiles: ["analytics", "all"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: superset
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: ${SUPERSET_DB_PASSWORD:?Set SUPERSET_DB_PASSWORD in .env}
+    volumes:
+      - superset_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset -d superset"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lakehouse
+
+  superset-init:
+    build: ./superset
+    image: ripe-atlas-superset:6.1.0
+    profiles: ["analytics", "all"]
+    command: ["sh", "/app/docker/superset-init.sh"]
+    # Chỉ truyền đúng biến Superset cần, không dùng env_file để tránh lộ khóa S3.
+    environment: &superset_environment
+      SUPERSET_CONFIG_PATH: /app/docker/superset_config.py
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?Set SUPERSET_SECRET_KEY in .env}
+      SUPERSET_DB_PASSWORD: ${SUPERSET_DB_PASSWORD:?Set SUPERSET_DB_PASSWORD in .env}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?Set SUPERSET_ADMIN_PASSWORD in .env}
+    volumes: &superset_volumes
+      - ./superset/superset_config.py:/app/docker/superset_config.py:ro
+      - ./superset/superset-init.sh:/app/docker/superset-init.sh:ro
+    depends_on:
+      superset-db:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+    networks:
+      - lakehouse
+
+  superset:
+    image: ripe-atlas-superset:6.1.0
+    profiles: ["analytics", "all"]
+    restart: unless-stopped
+    ports:
+      - "8088:8088"
+    environment: *superset_environment
+    volumes: *superset_volumes
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8088/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    depends_on:
+      superset-init:
+        condition: service_completed_successfully
+    networks:
+      - lakehouse
+
 networks:
   lakehouse:
     driver: bridge
@@ -206,5 +296,6 @@ networks:
 volumes:
   master_data:
   volume_data:
-  filer_data: 
+  filer_data:
   postgres_data:
+  superset_db_data:
