@@ -1,3 +1,5 @@
-# Script chạy trong container Linux phải giữ LF.
-*.sh text eol=lf
-*.properties text eol=lf
+# Mọi file văn bản lưu và checkout với LF (Linux), kể cả trên Windows: tránh repo "thay đổi" giả khi
+# mở cùng thư mục bằng git trong WSL và git Windows (core.autocrlf=true). Script .sh bắt buộc LF.
+* text=auto eol=lf
+*.zip binary
+*.png binary
