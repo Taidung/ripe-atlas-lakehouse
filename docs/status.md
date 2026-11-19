@@ -364,8 +364,7 @@ Kiểm chứng trên Prometheus/Grafana đang chạy:
   - 7 test mới cho nhãn mặc định và giá trị truyền vào; unit test ingestion 55/55.
   - Chạy thật `metadata` không truyền `--run-type`: Pushgateway ghi group `{stage=metadata, run_type=manual}`.
   - `gold_build` 2026-11-19 chạy lại `published`, số dòng không đổi.
-- Còn lại trên Pushgateway: group `{stage=metadata, run_type=scheduled}` do lần chạy tay trước đây bị gắn nhầm nhãn.
-  Không che được lỗi thật (rule chỉ bắn khi lần thất bại mới hơn lần thành công), nhưng là dữ liệu sai.
+- Đã xoá group Pushgateway `{stage=metadata, run_type=scheduled, outcome=success}` do lần chạy tay trước đây bị gắn nhầm nhãn.
 
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
