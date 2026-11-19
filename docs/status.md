@@ -266,6 +266,7 @@ Kiểm chứng sau refactor (2026-11-19):
   - `silver_build`: `published_with_warnings`. Cảnh báo duy nhất là `rtt_ms` ngoài [0, 60000] ở `fact_ping_reply`, giống lần chạy trước refactor.
   - `gold_build`: `published`
   - `gold_crosscheck`: **PASS**, sai số percentile lớn nhất 0,93%.
+- CI GitHub run 44508370312 (commit `f992573`): **success**. Gồm job `lint-and-unit` (ruff, Compose, JSON/YAML, unit test) và `spark-tests` (build image, chạy `tests/transformation` + `tests/quality`).
 - Chưa chạy lại Superset `provision.py` và OpenMetadata ingestion sau khi đổi mount `config/metrics.json`; mới kiểm tra cú pháp và cấu hình Compose.
 
 ## Đối chiếu tiêu chí nghiệm thu cuối
