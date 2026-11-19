@@ -1,5 +1,5 @@
 {
-  "_doc": "Biểu thức metric dùng chung: Superset provisioning và test Spark (tests/spark/test_gold.py) cùng đọc file này. Định nghĩa: docs/metric-dictionary.md. Chỉ dùng cú pháp chạy được trên cả Trino lẫn Spark SQL, trừ các metric có 'trino_only': true.",
+  "_doc": "Biểu thức metric dùng chung: Superset provisioning và test Spark (tests/transformation/test_gold.py) cùng đọc file này. Định nghĩa: docs/metric-dictionary.md. Chỉ dùng cú pháp chạy được trên cả Trino lẫn Spark SQL, trừ các metric có 'trino_only': true.",
   "quality": {
     "results": {"label": "Số result", "expression": "SUM(results_total)", "format": ",d"},
     "results_measured": {"label": "Số result đã đo được (sent > 0)", "expression": "SUM(results_measured)", "format": ",d"},
