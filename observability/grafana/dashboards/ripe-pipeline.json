@@ -31,7 +31,7 @@
    "targets": [
     {
      "refId": "A",
-     "expr": "time() - max by (measurement_id) (ripe_gold_max_event_timestamp_seconds)",
+     "expr": "time() - max by (measurement_id) (ripe_gold_max_event_timestamp_seconds{run_type=~\"$run_type\"})",
      "legendFormat": "{{measurement_id}}",
      "datasource": {
       "type": "prometheus",
@@ -85,7 +85,7 @@
    "targets": [
     {
      "refId": "A",
-     "expr": "time() - max by (stage) (ripe_job_last_success_timestamp_seconds)",
+     "expr": "time() - max by (stage) (ripe_job_last_success_timestamp_seconds{run_type=~\"$run_type\"})",
      "legendFormat": "{{stage}}",
      "datasource": {
       "type": "prometheus",
@@ -139,7 +139,7 @@
    "targets": [
     {
      "refId": "A",
-     "expr": "max by (stage, run_type) (ripe_job_last_run_success)",
+     "expr": "max by (stage, run_type) (ripe_job_last_run_success{run_type=~\"$run_type\"})",
      "legendFormat": "{{stage}} {{run_type}}",
      "datasource": {
       "type": "prometheus",
@@ -188,7 +188,7 @@
    "targets": [
     {
      "refId": "A",
-     "expr": "max by (stage) (ripe_job_duration_seconds)",
+     "expr": "max by (stage) (ripe_job_duration_seconds{run_type=~\"$run_type\"})",
      "legendFormat": "{{stage}}",
      "datasource": {
       "type": "prometheus",
@@ -222,7 +222,7 @@
    "targets": [
     {
      "refId": "A",
-     "expr": "sum by (endpoint, status_class) (ripe_api_requests)",
+     "expr": "sum by (endpoint, status_class) (ripe_api_requests{run_type=~\"$run_type\"})",
      "legendFormat": "{{endpoint}} {{status_class}}",
      "datasource": {
       "type": "prometheus",
@@ -254,7 +254,7 @@
    "targets": [
     {
      "refId": "A",
-     "expr": "sum by (endpoint, reason) (ripe_api_retries)",
+     "expr": "sum by (endpoint, reason) (ripe_api_retries{run_type=~\"$run_type\"})",
      "legendFormat": "{{endpoint}} {{reason}}",
      "datasource": {
       "type": "prometheus",
@@ -286,7 +286,7 @@
    "targets": [
     {
      "refId": "A",
-     "expr": "sum by (endpoint) (ripe_api_request_duration_seconds_total) / sum by (endpoint) (ripe_api_request_count_total)",
+     "expr": "sum by (endpoint) (ripe_api_request_duration_seconds_total{run_type=~\"$run_type\"}) / sum by (endpoint) (ripe_api_request_count_total{run_type=~\"$run_type\"})",
      "legendFormat": "{{endpoint}}",
      "datasource": {
       "type": "prometheus",
@@ -320,7 +320,7 @@
    "targets": [
     {
      "refId": "A",
-     "expr": "sum by (kind) (ripe_ingest_records{kind=~\"fetched|staged|unchanged|changed|status_malformed_json\"})",
+     "expr": "sum by (kind) (ripe_ingest_records{kind=~\"fetched|staged|unchanged|changed|status_malformed_json\", run_type=~\"$run_type\"})",
      "legendFormat": "{{kind}}",
      "datasource": {
       "type": "prometheus",
@@ -352,7 +352,7 @@
    "targets": [
     {
      "refId": "A",
-     "expr": "sum by (entity, kind) (ripe_bronze_rows)",
+     "expr": "sum by (entity, kind) (ripe_bronze_rows{run_type=~\"$run_type\"})",
      "legendFormat": "{{entity}} {{kind}}",
      "datasource": {
       "type": "prometheus",
@@ -384,7 +384,7 @@
    "targets": [
     {
      "refId": "A",
-     "expr": "max by (layer, severity) (ripe_dq_failed_checks)",
+     "expr": "max by (layer, severity) (ripe_dq_failed_checks{run_type=~\"$run_type\"})",
      "legendFormat": "{{layer}} {{severity}}",
      "datasource": {
       "type": "prometheus",
@@ -433,7 +433,7 @@
    "targets": [
     {
      "refId": "A",
-     "expr": "max by (probe_set_version, measurement_id) (ripe_gold_latest_hour_completeness_ratio)",
+     "expr": "max by (probe_set_version, measurement_id) (ripe_gold_latest_hour_completeness_ratio{run_type=~\"$run_type\"})",
      "legendFormat": "{{probe_set_version}} {{measurement_id}}",
      "datasource": {
       "type": "prometheus",
@@ -487,7 +487,7 @@
    "targets": [
     {
      "refId": "A",
-     "expr": "max by (measurement_id) (ripe_silver_rows)",
+     "expr": "max by (measurement_id) (ripe_silver_rows{run_type=~\"$run_type\"})",
      "legendFormat": "{{measurement_id}}",
      "datasource": {
       "type": "prometheus",
@@ -777,5 +777,55 @@
    "options": {}
   }
  ],
+ "templating": {
+  "list": [
+   {
+    "name": "run_type",
+    "label": "Loại lần chạy",
+    "type": "custom",
+    "query": "scheduled,reconcile,backfill,repair,manual",
+    "multi": true,
+    "includeAll": true,
+    "allValue": ".*",
+    "current": {
+     "selected": true,
+     "text": [
+      "scheduled"
+     ],
+     "value": [
+      "scheduled"
+     ]
+    },
+    "options": [
+     {
+      "selected": true,
+      "text": "scheduled",
+      "value": "scheduled"
+     },
+     {
+      "selected": false,
+      "text": "reconcile",
+      "value": "reconcile"
+     },
+     {
+      "selected": false,
+      "text": "backfill",
+      "value": "backfill"
+     },
+     {
+      "selected": false,
+      "text": "repair",
+      "value": "repair"
+     },
+     {
+      "selected": false,
+      "text": "manual",
+      "value": "manual"
+     }
+    ],
+    "description": "Số liệu job theo loại lần chạy. Cảnh báo chỉ xét scheduled."
+   }
+  ]
+ },
  "description": "Vận hành pipeline: độ tươi, job, API, khối lượng, chất lượng, hạ tầng. Runbook: docs/runbook.md"
 }

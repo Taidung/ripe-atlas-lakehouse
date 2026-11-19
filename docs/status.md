@@ -335,6 +335,22 @@ Kiểm chứng:
 - CI GitHub run 44540182754 (commit `fa8ede0`): **success**. Cả `lint-and-unit` và `spark-tests` đều pass.
 - Đã xoá 10 group Pushgateway cũ không có `run_type` (group số liệu và group thành công/thất bại của bronze_metadata, bronze_results, silver, gold).
 
+## Phiên 2026-11-19: Cảnh báo sau khi tách metric theo run_type
+
+Phát sinh từ sửa lỗi 3: mỗi `run_type` có group Pushgateway riêng, giữ giá trị tới lần chạy cùng loại kế tiếp.
+4 rule không lọc `run_type` sẽ giữ giá trị cũ của backfill hoặc chạy tay: `ripe-dq-critical`, `ripe-quarantine`,
+`ripe-measurement-missing-data`, và `ripe-api-rate-limited` (rule cuối bản review chưa nêu).
+
+Sửa:
+- 4 rule chỉ xét `run_type="scheduled"`, giống `ripe-job-failing`.
+- Dashboard Grafana có biến `run_type` (mặc định `scheduled`, chọn được nhiều giá trị hoặc All); 12 truy vấn số liệu job lọc theo biến này.
+- `dq_block_on_branch.sh` chạy job với `PUSHGATEWAY_URL` rỗng.
+
+Kiểm chứng trên Prometheus/Grafana đang chạy:
+- Biểu thức DQ cũ cho `silver = 2`, tức sẽ bắn, do metric `manual` của lần test cố ý bị chặn. Biểu thức mới không có kết quả.
+- Sau khi restart Grafana, cả 5 rule số liệu job đã lọc `scheduled`; rule DQ critical ở trạng thái `inactive`.
+- Hai cảnh báo đang bắn là đúng thực tế: Gold trễ (Airflow đang tắt) và service không phản hồi (Trino/Superset/Airflow đang tắt).
+
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
 | Tiêu chí | Trạng thái |

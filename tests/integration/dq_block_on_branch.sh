@@ -8,7 +8,7 @@
 #   4. Chạy gold_build trên nhánh cho DAY -> Gold dựng từ snapshot Silver cũ, mart không rỗng.
 #   5. Chạy gold_build trên nhánh cho một ngày không có Silver -> không ghi đè mart (không có commit mới).
 #   6. Kiểm tra main không đổi, rồi xóa nhánh.
-# Yêu cầu: stack core đang chạy, Silver và Gold ngày DAY đã có trên main.
+# Yêu cầu: stack core đang chạy, Silver và Gold ngày DAY đã có trên main. Job trong test không đẩy metric.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export MSYS_NO_PATHCONV=1
@@ -23,7 +23,8 @@ spark_sql() { docker compose exec -T spark-iceberg spark-sql -S --conf "spark.sq
 spark_job() {  # spark_job <ref> <script> <args...>: in các sự kiện chính, trả về exit code của job
   local ref=$1 script=$2; shift 2
   set +e
-  docker compose exec -T spark-iceberg spark-submit --conf "spark.sql.catalog.nessie.ref=$ref" \
+  # PUSHGATEWAY_URL rỗng: job thử nghiệm (cố ý bị chặn) không đẩy metric, nên không để lại cảnh báo trên Grafana.
+  docker compose exec -T -e PUSHGATEWAY_URL= spark-iceberg spark-submit --conf "spark.sql.catalog.nessie.ref=$ref" \
     "/opt/app/transformation/jobs/$script" "$@" 2>&1 | grep -E '"event": "(day_blocked|day_written|day_skipped)"' | cut -c1-300 >&2
   local code=${PIPESTATUS[0]}
   set -e

@@ -74,7 +74,7 @@ groups:
               refId: A
               instant: true
               # Độ đầy đủ ước tính của giờ gần nhất đã xử lý < 50% (ngưỡng đề xuất). Giờ đã xử lý mà 0 result -> 0.
-              expr: min by (measurement_id, probe_set_version) (ripe_gold_latest_hour_completeness_ratio)
+              expr: min by (measurement_id, probe_set_version) (ripe_gold_latest_hour_completeness_ratio{run_type="scheduled"})
           - refId: C
             datasourceUid: __expr__
             model: {refId: C, type: threshold, expression: A, conditions: [{evaluator: {type: lt, params: [0.5]}}]}
@@ -96,7 +96,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: max by (stage, layer) (ripe_dq_failed_checks{severity="critical"})
+              expr: max by (stage, layer) (ripe_dq_failed_checks{severity="critical", run_type="scheduled"})
           - refId: C
             datasourceUid: __expr__
             model: {refId: C, type: threshold, expression: A, conditions: [{evaluator: {type: gt, params: [0]}}]}
@@ -160,7 +160,7 @@ groups:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: prometheus
-            model: {refId: A, instant: true, expr: "sum by (run_type) (ripe_api_retries{reason=\"rate_limited_429\"})"}
+            model: {refId: A, instant: true, expr: "sum by (run_type) (ripe_api_retries{reason=\"rate_limited_429\", run_type=\"scheduled\"})"}
           - refId: C
             datasourceUid: __expr__
             model: {refId: C, type: threshold, expression: A, conditions: [{evaluator: {type: gt, params: [5]}}]}
@@ -179,7 +179,7 @@ groups:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: prometheus
-            model: {refId: A, instant: true, expr: "sum by (entity) (ripe_bronze_rows{kind=\"quarantined\"})"}
+            model: {refId: A, instant: true, expr: "sum by (entity) (ripe_bronze_rows{kind=\"quarantined\", run_type=\"scheduled\"})"}
           - refId: C
             datasourceUid: __expr__
             model: {refId: C, type: threshold, expression: A, conditions: [{evaluator: {type: gt, params: [0]}}]}

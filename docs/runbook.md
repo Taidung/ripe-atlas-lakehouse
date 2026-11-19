@@ -29,8 +29,13 @@ Các lệnh dưới đây chạy từ thư mục gốc repo. Trên Git Bash (Win
 - Mọi task ghi lakehouse đi qua pool `lakehouse_writer` (1 slot), nên backfill và lịch chạy không ghi đồng thời.
 - Task Silver/Gold thất bại với mã thoát 2 nghĩa là **lỗi chất lượng critical**; task này không retry.
 - Mỗi job Spark nhận `--run-type` (`scheduled`, `reconcile`, `backfill`, `repair`, `manual`; chạy tay mặc định `manual`).
-  Metric được đẩy vào group Pushgateway riêng theo `run_type`, và cảnh báo "job lỗi liên tiếp" chỉ xét
-  `run_type="scheduled"`: một backfill thành công không che được lỗi của lịch chạy chính, và ngược lại.
+  Metric được đẩy vào group Pushgateway riêng theo `run_type`, và group đó giữ giá trị tới lần chạy cùng loại kế tiếp.
+  Vì vậy **mọi cảnh báo dựa trên số liệu job chỉ xét `run_type="scheduled"`**: job lỗi liên tiếp, DQ critical,
+  quarantine, độ đầy đủ, API 429. Một lần backfill hay chạy tay (kể cả lần cố ý bị chặn) không làm cảnh báo bắn mãi,
+  cũng không che lỗi của lịch chạy chính.
+  Lỗi của reconcile, backfill, chạy tay không sinh cảnh báo: xem trên Airflow, hoặc chọn biến `Loại lần chạy`
+  trên dashboard "RIPE Atlas Pipeline" (mặc định `scheduled`).
+  `tests/integration/dq_block_on_branch.sh` chạy job với `PUSHGATEWAY_URL` rỗng nên không đẩy metric.
 - `bronze_ingest.py --entity metadata` chỉ xét manifest của 3 ngày gần nhất (`--lookback-days`). Manifest cũ hơn
   chưa nạp thì chạy lại với `--lookback-days N` hoặc `--start/--end`.
 - Sau khi nâng cấp lên bản có `run_type` trong grouping key, xoá các group cũ không có `run_type` một lần:

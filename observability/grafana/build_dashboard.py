@@ -7,6 +7,10 @@ import json
 from pathlib import Path
 
 DS = {"type": "prometheus", "uid": "prometheus"}
+# Mỗi run_type (scheduled, reconcile, backfill, repair, manual) có group Pushgateway riêng và giữ giá trị tới lần chạy
+# cùng loại kế tiếp. Panel số liệu job lọc theo biến dashboard $run_type (mặc định scheduled) để không trộn
+# giá trị cũ của một lần backfill hay chạy tay vào trạng thái của lịch chạy chính.
+RT = 'run_type=~"$run_type"'
 panels, y = [], 0
 _id = 0
 
@@ -56,7 +60,7 @@ def row_break():
 panel(
     "Độ tươi Gold theo measurement (giây kể từ event mới nhất)",
     "stat",
-    [("time() - max by (measurement_id) (ripe_gold_max_event_timestamp_seconds)", "{{measurement_id}}")],
+    [(f"time() - max by (measurement_id) (ripe_gold_max_event_timestamp_seconds{{{RT}}})", "{{measurement_id}}")],
     w=12,
     unit="s",
     thresholds=[(None, "green"), (5400, "orange"), (7200, "red")],
@@ -65,7 +69,7 @@ panel(
 panel(
     "Lần thành công gần nhất theo stage (giây trước)",
     "stat",
-    [("time() - max by (stage) (ripe_job_last_success_timestamp_seconds)", "{{stage}}")],
+    [(f"time() - max by (stage) (ripe_job_last_success_timestamp_seconds{{{RT}}})", "{{stage}}")],
     w=12,
     unit="s",
     thresholds=[(None, "green"), (3900, "orange"), (7200, "red")],
@@ -75,24 +79,35 @@ row_break()
 panel(
     "Lần chạy gần nhất thành công? (1/0)",
     "stat",
-    [("max by (stage, run_type) (ripe_job_last_run_success)", "{{stage}} {{run_type}}")],
+    [(f"max by (stage, run_type) (ripe_job_last_run_success{{{RT}}})", "{{stage}} {{run_type}}")],
     w=12,
     thresholds=[(None, "red"), (1, "green")],
 )
-panel("Thời lượng job lần gần nhất", "bargauge", [("max by (stage) (ripe_job_duration_seconds)", "{{stage}}")], w=12, unit="s")
+panel("Thời lượng job lần gần nhất", "bargauge", [(f"max by (stage) (ripe_job_duration_seconds{{{RT}}})", "{{stage}}")], w=12, unit="s")
 row_break()
 # --- Hàng 2: API
 panel(
     "Request RIPE Atlas API theo kết quả (lần chạy gần nhất)",
     "bargauge",
-    [("sum by (endpoint, status_class) (ripe_api_requests)", "{{endpoint}} {{status_class}}")],
+    [(f"sum by (endpoint, status_class) (ripe_api_requests{{{RT}}})", "{{endpoint}} {{status_class}}")],
     w=8,
 )
-panel("Retry theo lý do (429 / 5xx / mạng)", "bargauge", [("sum by (endpoint, reason) (ripe_api_retries)", "{{endpoint}} {{reason}}")], w=8)
+panel(
+    "Retry theo lý do (429 / 5xx / mạng)",
+    "bargauge",
+    [(f"sum by (endpoint, reason) (ripe_api_retries{{{RT}}})", "{{endpoint}} {{reason}}")],
+    w=8,
+)
 panel(
     "Thời gian trung bình mỗi request",
     "stat",
-    [("sum by (endpoint) (ripe_api_request_duration_seconds_total) / sum by (endpoint) (ripe_api_request_count_total)", "{{endpoint}}")],
+    [
+        (
+            f"sum by (endpoint) (ripe_api_request_duration_seconds_total{{{RT}}})"
+            f" / sum by (endpoint) (ripe_api_request_count_total{{{RT}}})",
+            "{{endpoint}}",
+        )
+    ],
     w=8,
     unit="s",
 )
@@ -101,21 +116,21 @@ row_break()
 panel(
     "Result ingest theo loại (lần chạy gần nhất)",
     "bargauge",
-    [('sum by (kind) (ripe_ingest_records{kind=~"fetched|staged|unchanged|changed|status_malformed_json"})', "{{kind}}")],
+    [(f'sum by (kind) (ripe_ingest_records{{kind=~"fetched|staged|unchanged|changed|status_malformed_json", {RT}}})', "{{kind}}")],
     w=8,
     desc="unchanged = trùng nội dung khi tải chồng lấn (không stage lại).",
 )
 panel(
     "Bronze: dòng theo loại",
     "bargauge",
-    [("sum by (entity, kind) (ripe_bronze_rows)", "{{entity}} {{kind}}")],
+    [(f"sum by (entity, kind) (ripe_bronze_rows{{{RT}}})", "{{entity}} {{kind}}")],
     w=8,
     desc="already_present = xử lý lại; quarantined = bị cách ly.",
 )
 panel(
     "Kiểm tra chất lượng thất bại",
     "stat",
-    [("max by (layer, severity) (ripe_dq_failed_checks)", "{{layer}} {{severity}}")],
+    [(f"max by (layer, severity) (ripe_dq_failed_checks{{{RT}}})", "{{layer}} {{severity}}")],
     w=8,
     thresholds=[(None, "green"), (1, "red")],
 )
@@ -123,7 +138,12 @@ row_break()
 panel(
     "Độ đầy đủ ước tính giờ gần nhất",
     "bargauge",
-    [("max by (probe_set_version, measurement_id) (ripe_gold_latest_hour_completeness_ratio)", "{{probe_set_version}} {{measurement_id}}")],
+    [
+        (
+            f"max by (probe_set_version, measurement_id) (ripe_gold_latest_hour_completeness_ratio{{{RT}}})",
+            "{{probe_set_version}} {{measurement_id}}",
+        )
+    ],
     w=12,
     unit="percentunit",
     thresholds=[(None, "red"), (0.5, "orange"), (0.9, "green")],
@@ -131,7 +151,7 @@ panel(
 panel(
     "Silver: số dòng theo measurement (ngày vừa tính lại)",
     "bargauge",
-    [("max by (measurement_id) (ripe_silver_rows)", "{{measurement_id}}")],
+    [(f"max by (measurement_id) (ripe_silver_rows{{{RT}}})", "{{measurement_id}}")],
     w=12,
 )
 row_break()
@@ -193,6 +213,25 @@ dashboard = {
     "refresh": "1m",
     "time": {"from": "now-6h", "to": "now"},
     "panels": panels,
+    "templating": {
+        "list": [
+            {
+                "name": "run_type",
+                "label": "Loại lần chạy",
+                "type": "custom",
+                "query": "scheduled,reconcile,backfill,repair,manual",
+                "multi": True,
+                "includeAll": True,
+                "allValue": ".*",
+                "current": {"selected": True, "text": ["scheduled"], "value": ["scheduled"]},
+                "options": [
+                    {"selected": v == "scheduled", "text": v, "value": v}
+                    for v in ("scheduled", "reconcile", "backfill", "repair", "manual")
+                ],
+                "description": "Số liệu job theo loại lần chạy. Cảnh báo chỉ xét scheduled.",
+            }
+        ]
+    },
     "description": "Vận hành pipeline: độ tươi, job, API, khối lượng, chất lượng, hạ tầng. Runbook: docs/runbook.md",
 }
 out = Path(__file__).resolve().parent / "dashboards" / "ripe-pipeline.json"
