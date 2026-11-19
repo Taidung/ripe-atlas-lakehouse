@@ -1,0 +1,78 @@
+# Integration / end-to-end trên stack thật. Nặng (image Spark ~6,5 GB): chạy thủ công hoặc hằng đêm, không chạy ở PR.
+# Gọi RIPE Atlas API thật cho đúng 1 giờ dữ liệu của tập dev (200 probe) -> không phụ thuộc số lượng result để pass.
+name: integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "40 19 * * *"   # 02:40 giờ VN
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Giải phóng đĩa runner
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc && df -h /
+      - name: Tạo .env với secrets sinh ngẫu nhiên (chỉ tồn tại trong runner)
+        run: |
+          python3 - <<'EOF'
+          import base64, os, secrets
+          lines = open(".env.example", encoding="utf-8").read().splitlines()
+          out = []
+          for line in lines:
+              if "=" in line and not line.startswith("#"):
+                  key = line.split("=", 1)[0]
+                  value = base64.urlsafe_b64encode(os.urandom(32)).decode() if key == "AIRFLOW_FERNET_KEY" else secrets.token_hex(16)
+                  line = f"{key}={value}"
+              out.append(line)
+          open(".env", "w", encoding="utf-8").write("\n".join(out) + "\n")
+          EOF
+          sed -E 's/=.*/=<redacted>/' .env | head -40
+      - name: Cấu hình dlt cho staging (secrets.toml không commit)
+        run: echo "secrets từ biến môi trường của container ingestion; không cần file"
+      - name: Khởi động core + analytics + monitoring
+        run: |
+          docker compose --profile analytics --profile monitoring --profile jobs build
+          docker compose --profile analytics --profile monitoring up -d --wait
+      - name: Smoke Spark -> Nessie -> Trino
+        run: bash scripts/smoke_compat.sh
+      - name: Pipeline 1 giờ (dev-200-v1) -> Bronze -> Silver -> Gold
+        run: |
+          END=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:00:00Z); START=$(date -u -d '2 hours ago' +%Y-%m-%dT%H:00:00Z)
+          docker compose --profile jobs run --rm -T ingestion metadata
+          docker compose --profile jobs run --rm -T ingestion results --start "$START" --end "$END"
+          docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_ingest.py --entity metadata
+          docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_ingest.py --entity ping_result_raw --start "$START" --end "$END"
+          docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/silver_build.py --start "$START" --end "$END"
+          docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/gold_build.py --start "$START" --end "$END"
+          DAY=$(TZ=Asia/Ho_Chi_Minh date -d "$START" +%Y-%m-%d)
+          docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/crosscheck_gold.py --date "$DAY"
+      - name: Rerun cùng input -> 0 dòng mới (idempotency)
+        run: |
+          END=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:00:00Z); START=$(date -u -d '2 hours ago' +%Y-%m-%dT%H:00:00Z)
+          docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_ingest.py --entity ping_result_raw --start "$START" --end "$END" --reprocess 2>&1 | tee bronze_rerun.log
+          grep -q '"rows_inserted": 0' bronze_rerun.log
+      - name: Chặn công bố khi lỗi critical (nhánh Nessie tạm)
+        run: |
+          DAY=$(TZ=Asia/Ho_Chi_Minh date -d "2 hours ago" +%Y-%m-%d)
+          bash scripts/test_dq_block_on_branch.sh "$DAY"
+      - name: Superset dashboard + kiểm tra filter
+        run: |
+          docker compose exec -T superset /app/.venv/bin/python /app/project/provision.py
+      - name: Metric trên Pushgateway / Prometheus
+        run: |
+          curl -fs localhost:9091/metrics | grep -E '^ripe_job_last_success_timestamp_seconds' | head
+      - name: Thu log
+        if: always()
+        run: |
+          mkdir -p reports && docker compose --profile all logs --no-color > reports/compose.log 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-logs
+          path: reports/

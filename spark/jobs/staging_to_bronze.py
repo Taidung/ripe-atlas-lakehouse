@@ -4,7 +4,6 @@ from datetime import datetime, timedelta, timezone
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, get_json_object, input_file_name, lit, regexp_extract
 
-
 STAGING = "s3a://staging/ripe_atlas"
 BRONZE = "nessie.bronze"
 UTC_PLUS_7 = timezone(timedelta(hours=7))

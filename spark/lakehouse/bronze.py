@@ -14,7 +14,11 @@ from __future__ import annotations
 from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
-    BooleanType, LongType, StringType, StructField, StructType,
+    BooleanType,
+    LongType,
+    StringType,
+    StructField,
+    StructType,
 )
 
 STAGED_RESULT_SCHEMA = StructType([

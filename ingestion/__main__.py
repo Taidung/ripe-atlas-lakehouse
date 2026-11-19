@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
+from collections import Counter
 from datetime import datetime, timezone
 
-from ingestion import build_probe_set
+from ingestion import build_probe_set, metrics
 from ingestion.config import HttpSettings, IngestSettings, StagingSettings, parse_measurement_ids
 from ingestion.logs import log_event
 from ingestion.pipeline import IngestContext, new_run_id, run_measurement_metadata, run_probe_metadata, run_results_window
@@ -40,16 +42,24 @@ def make_context(args: argparse.Namespace, run_type: str) -> IngestContext:
 
 def run_windows(ctx: IngestContext, measurement_ids: list[int], windows) -> int:
     ensure_completed(windows, ctx.now())
+    started = time.time()
+    metrics.reset()
     failures = 0
+    per_msm: dict[int, Counter] = {m: Counter() for m in measurement_ids}
+    status: Counter = Counter()
     for window in windows:
         for msm in measurement_ids:
             try:
-                run_results_window(ctx, msm, window)
+                manifest = run_results_window(ctx, msm, window)
+                per_msm[msm].update({k: v for k, v in manifest["counts"].items() if isinstance(v, int)})
+                status["ok"] += 1
             except Exception as exc:  # noqa: BLE001 - ghi nhận rồi tiếp tục các job độc lập
                 failures += 1
+                status["failed"] += 1
                 log_event("ingest", "window_failed", run_id=ctx.run_id, measurement_id=msm, window=window.label,
                           error=type(exc).__name__, message=str(exc))
     log_event("ingest", "run_finished", run_id=ctx.run_id, run_type=ctx.run_type, jobs=len(windows) * len(measurement_ids), failures=failures)
+    metrics.push_ingest_metrics(ctx.run_type, started, failures == 0, per_msm, status)
     return 1 if failures else 0
 
 
@@ -73,6 +83,10 @@ def main(argv: list[str] | None = None) -> int:
     inc.add_argument("--measurements")
     inc.add_argument("--probe-set")
 
+    cln = sub.add_parser("cleanup", help="Liệt kê/xóa object staging mồ côi (không manifest nào tham chiếu)")
+    cln.add_argument("--orphan-min-age-hours", type=int, default=48)
+    cln.add_argument("--apply", action="store_true", help="Xóa thật; mặc định chỉ liệt kê")
+
     bps = sub.add_parser("build-probe-set", help="Sinh tập probe phân tầng (ADR-0001)")
     bps.add_argument("--version", required=True)
     bps.add_argument("--k", type=int, default=2)
@@ -87,10 +101,23 @@ def main(argv: list[str] | None = None) -> int:
         build_probe_set.main(args.version, args.k, args.cap, args.seed, args.reference_end, args.reference_minutes)
         return 0
 
+    if args.command == "cleanup":
+        from ingestion.cleanup import run_cleanup
+
+        run_cleanup(StagingStore.from_settings(StagingSettings.from_env()), args.orphan_min_age_hours, args.apply)
+        return 0
+
     if args.command == "metadata":
         ctx = make_context(args, "scheduled")
-        run_measurement_metadata(ctx, parse_measurement_ids(args.measurements))
-        run_probe_metadata(ctx)
+        ok = False
+        try:
+            run_measurement_metadata(ctx, parse_measurement_ids(args.measurements))
+            run_probe_metadata(ctx)
+            ok = True
+        finally:
+            url = metrics.os.environ.get("PUSHGATEWAY_URL")
+            if url:
+                metrics.push_outcome(url, "metadata", "scheduled", ok, time.time())
         return 0
 
     run_type = {"results": "manual", "backfill": "backfill", "incremental": "scheduled"}[args.command]

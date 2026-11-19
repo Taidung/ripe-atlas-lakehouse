@@ -1,0 +1,190 @@
+# Cảnh báo vận hành (Grafana unified alerting, provisioning). Runbook: docs/runbook.md#<uid>.
+# Ngưỡng đánh dấu "đề xuất" là cấu hình ban đầu, chưa hiệu chỉnh trên lịch sử dài.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: ripe-pipeline
+    folder: RIPE Atlas Lakehouse
+    interval: 1m
+    rules:
+      - uid: ripe-job-failing
+        title: "Job pipeline lỗi liên tiếp"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              # Lần chạy lịch gần nhất thất bại VÀ lần thành công gần nhất đã quá 2 giờ (>= 2 lần chạy theo giờ lỗi),
+              # hoặc stage chưa từng thành công mà đã có lần thất bại. Giá trị = số giây kể từ lần thành công.
+              expr: >-
+                (
+                  (time() - max by (stage) (ripe_job_last_success_timestamp_seconds{run_type="scheduled"}) > 7200)
+                  and on (stage)
+                  (max by (stage) (ripe_job_last_failure_timestamp_seconds{run_type="scheduled"})
+                    > on (stage) max by (stage) (ripe_job_last_success_timestamp_seconds{run_type="scheduled"}))
+                )
+                or
+                (time() - max by (stage) (ripe_job_last_failure_timestamp_seconds{run_type="scheduled"})
+                  unless on (stage) max by (stage) (ripe_job_last_success_timestamp_seconds{run_type="scheduled"}))
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: A, conditions: [{evaluator: {type: gt, params: [0]}}]}
+        noDataState: OK
+        execErrState: Error
+        for: 0m
+        labels: {severity: critical, team: data-platform}
+        annotations:
+          summary: "Stage {{ $labels.stage }} thất bại liên tiếp; lần thành công cuối cách đây {{ humanizeDuration $values.A.Value }}"
+          runbook_url: "docs/runbook.md#ripe-job-failing"
+
+      - uid: ripe-gold-stale
+        title: "Gold trễ quá 2 giờ"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              # SLO (giả định A3): Gold có dữ liệu trong vòng 2 giờ kể từ event_time.
+              expr: time() - max by (measurement_id) (ripe_gold_max_event_timestamp_seconds)
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: A, conditions: [{evaluator: {type: gt, params: [7200]}}]}
+        noDataState: Alerting
+        execErrState: Error
+        for: 5m
+        labels: {severity: critical, team: data-platform}
+        annotations:
+          summary: "Measurement {{ $labels.measurement_id }}: event mới nhất trong Gold cách đây {{ humanizeDuration $values.A.Value }} (SLO 2 giờ)"
+          runbook_url: "docs/runbook.md#ripe-gold-stale"
+
+      - uid: ripe-measurement-missing-data
+        title: "Thiếu dữ liệu theo measurement (giờ gần nhất)"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              # Độ đầy đủ ước tính của giờ gần nhất đã xử lý < 50% (ngưỡng đề xuất). Giờ đã xử lý mà 0 result -> 0.
+              expr: min by (measurement_id, probe_set_version) (ripe_gold_latest_hour_completeness_ratio)
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: A, conditions: [{evaluator: {type: lt, params: [0.5]}}]}
+        noDataState: OK
+        execErrState: Error
+        for: 0m
+        labels: {severity: warning, team: data-platform}
+        annotations:
+          summary: "{{ $labels.probe_set_version }} / {{ $labels.measurement_id }}: độ đầy đủ giờ gần nhất {{ humanizePercentage $values.A.Value }}"
+          runbook_url: "docs/runbook.md#ripe-measurement-missing-data"
+
+      - uid: ripe-dq-critical
+        title: "Kiểm tra chất lượng critical thất bại"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: max by (stage, layer) (ripe_dq_failed_checks{severity="critical"})
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: A, conditions: [{evaluator: {type: gt, params: [0]}}]}
+        noDataState: OK
+        execErrState: Error
+        for: 0m
+        labels: {severity: critical, team: data-platform}
+        annotations:
+          summary: "{{ $labels.layer }}: {{ $values.A.Value }} kiểm tra critical thất bại; partition bị chặn công bố"
+          runbook_url: "docs/runbook.md#ripe-dq-critical"
+
+      - uid: ripe-disk-almost-full
+        title: "Đĩa dữ liệu Docker sắp đầy"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              # Ổ ảo Docker Desktop báo dung lượng tối đa ~1 TB (sparse vhdx) nên tỷ lệ % vô nghĩa; giới hạn thật là ổ D:
+              # của host (~68,7 GB trống lúc đo 2026-11-19). Ngưỡng đề xuất: dùng > 50 GB.
+              expr: max(node_filesystem_size_bytes{mountpoint="/mnt/docker-desktop-disk"} - node_filesystem_avail_bytes{mountpoint="/mnt/docker-desktop-disk"})
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: A, conditions: [{evaluator: {type: gt, params: [50000000000]}}]}
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels: {severity: warning, team: data-platform}
+        annotations:
+          summary: "Dữ liệu Docker đang dùng {{ humanize1024 $values.A.Value }}B (ngưỡng đề xuất 50 GB)"
+          runbook_url: "docs/runbook.md#ripe-disk-almost-full"
+
+      - uid: ripe-service-down
+        title: "Service không phản hồi (scrape)"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model: {refId: A, instant: true, expr: "min by (job) (up)"}
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: A, conditions: [{evaluator: {type: lt, params: [1]}}]}
+        noDataState: OK
+        execErrState: Error
+        for: 2m
+        labels: {severity: critical, team: data-platform}
+        annotations:
+          summary: "Prometheus không scrape được {{ $labels.job }}"
+          runbook_url: "docs/runbook.md#ripe-service-down"
+
+      - uid: ripe-api-rate-limited
+        title: "RIPE Atlas API trả 429 nhiều"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model: {refId: A, instant: true, expr: "sum by (run_type) (ripe_api_retries{reason=\"rate_limited_429\"})"}
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: A, conditions: [{evaluator: {type: gt, params: [5]}}]}
+        noDataState: OK
+        execErrState: Error
+        for: 0m
+        labels: {severity: warning, team: data-platform}
+        annotations:
+          summary: "{{ $values.A.Value }} lần retry vì HTTP 429 trong lần chạy {{ $labels.run_type }} gần nhất (ngưỡng đề xuất 5)"
+          runbook_url: "docs/runbook.md#ripe-api-rate-limited"
+
+      - uid: ripe-quarantine
+        title: "Có bản ghi bị quarantine"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model: {refId: A, instant: true, expr: "sum by (entity) (ripe_bronze_rows{kind=\"quarantined\"})"}
+          - refId: C
+            datasourceUid: __expr__
+            model: {refId: C, type: threshold, expression: A, conditions: [{evaluator: {type: gt, params: [0]}}]}
+        noDataState: OK
+        execErrState: Error
+        for: 0m
+        labels: {severity: warning, team: data-platform}
+        annotations:
+          summary: "{{ $values.A.Value }} bản ghi {{ $labels.entity }} bị cách ly ở lần nạp Bronze gần nhất"
+          runbook_url: "docs/runbook.md#ripe-quarantine"

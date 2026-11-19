@@ -15,16 +15,18 @@ from __future__ import annotations
 import hashlib
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlencode
 
 import requests
 
 from ingestion.config import API_BASE_URL, HttpSettings
 from ingestion.logs import log_event
+from ingestion.metrics import record_http
 
 RETRYABLE_EXCEPTIONS = (
     requests.ConnectionError,
@@ -134,6 +136,7 @@ class AtlasHttp:
                             retry_statuses=retry_statuses,
                         )
                         log_event("ingest", "http_ok", url=url, attempts=attempt, bytes=len(body), duration_s=info.duration_s)
+                        record_http(path, status, info.duration_s, retry_statuses, len(body))
                         return body, info
                     if status == 429 or status >= 500:
                         retry_after = parse_retry_after(response.headers.get("Retry-After"))
@@ -146,6 +149,7 @@ class AtlasHttp:
                 error = AtlasHttpError(f"{type(exc).__name__} for {url}: {exc}", status=None, url=url, retryable=True)
             if attempt == self.settings.max_attempts:
                 log_event("ingest", "http_failed", url=url, attempts=attempt, retry_statuses=retry_statuses)
+                record_http(path, error.status, round(time.monotonic() - started, 3), retry_statuses[:-1])
                 raise error
             delay = self.backoff_delay(attempt, retry_after)
             log_event("ingest", "http_retry", url=url, attempt=attempt, reason=retry_statuses[-1], delay_s=round(delay, 2))

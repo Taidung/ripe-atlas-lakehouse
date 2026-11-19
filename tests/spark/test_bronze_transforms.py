@@ -3,12 +3,16 @@ import json
 from datetime import date, datetime, timezone
 
 import pytest
+from pyspark.sql.types import StringType, StructField, StructType
 
 from lakehouse.bronze import (
-    STAGED_METADATA_SCHEMA, STAGED_RESULT_SCHEMA, batch_integrity_errors, transform_metadata, transform_results,
+    STAGED_METADATA_SCHEMA,
+    STAGED_RESULT_SCHEMA,
+    batch_integrity_errors,
+    transform_metadata,
+    transform_results,
 )
 from lakehouse.common import split_sql
-from pyspark.sql.types import StringType, StructField, StructType
 
 pytestmark = pytest.mark.spark
 

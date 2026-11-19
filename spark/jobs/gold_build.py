@@ -19,6 +19,7 @@ from pyspark.sql import functions as F
 
 from lakehouse import gold, quality
 from lakehouse.common import SQL_DIR, days_for_range, log_event, new_run_id, run_sql_file
+from lakehouse.metrics import StageMetrics, job_metrics
 from lakehouse.ops import DqRecorder, latest_snapshot, set_partition_status
 
 PROBE_SET_DIR = Path("/opt/app/config/probe_sets")
@@ -142,19 +143,51 @@ def main() -> int:
     spark = SparkSession.builder.appName("gold_build").getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
     run_id = new_run_id("gold")
-    try:
-        run_sql_file(spark, SQL_DIR / "ops" / "001_tables.sql")
-        spark.sql("CREATE NAMESPACE IF NOT EXISTS nessie.gold")
-        if args.dates:
-            days = [date.fromisoformat(d.strip()) for d in args.dates.split(",") if d.strip()]
-        else:
-            days = days_for_range(args.start, args.end)
-        dq = DqRecorder(spark, run_id)
-        results = {str(d): build_day(spark, d, run_id, dq) for d in days}
-        log_event("gold", "run_finished", run_id=run_id, results=results)
-        return 2 if "blocked" in results.values() else 0
-    finally:
-        spark.stop()
+    with job_metrics("gold") as m:
+        try:
+            run_sql_file(spark, SQL_DIR / "ops" / "001_tables.sql")
+            spark.sql("CREATE NAMESPACE IF NOT EXISTS nessie.gold")
+            if args.dates:
+                days = [date.fromisoformat(d.strip()) for d in args.dates.split(",") if d.strip()]
+            else:
+                days = days_for_range(args.start, args.end)
+            dq = DqRecorder(spark, run_id)
+            try:
+                results = {str(d): build_day(spark, d, run_id, dq) for d in days}
+                log_event("gold", "run_finished", run_id=run_id, results=results)
+                for status in ("published", "published_with_warnings", "blocked"):
+                    m.set("ripe_partition_days", "Số ngày theo trạng thái công bố, lần chạy gần nhất",
+                          sum(1 for r in results.values() if r == status), layer="gold", status=status)
+                push_freshness(spark, m)
+                m.ok = "blocked" not in results.values()
+                return 2 if "blocked" in results.values() else 0
+            finally:
+                for severity, n in dq.failed.items():
+                    m.set("ripe_dq_failed_checks", "Số kiểm tra chất lượng thất bại, lần chạy gần nhất", n,
+                          layer="gold", severity=severity)
+        finally:
+            spark.stop()
+
+
+def push_freshness(spark: SparkSession, m: StageMetrics) -> None:
+    """Độ tươi và độ phủ theo measurement, đọc từ Gold đã công bố (toàn bộ các ngày)."""
+    if not spark.catalog.tableExists("nessie.gold.coverage_hourly"):
+        return
+    cov = spark.table("nessie.gold.coverage_hourly")
+    for r in cov.filter("data_state = 'measured'").groupBy("probe_set_version", "measurement_id").agg(
+            F.max("max_event_time").alias("mx")).collect():
+        m.set("ripe_gold_max_event_timestamp_seconds", "event_time lớn nhất đã có trong Gold (Unix giây)",
+              r["mx"].timestamp(), probe_set_version=r["probe_set_version"], measurement_id=str(r["measurement_id"]))
+    # Giờ gần nhất đã có manifest (đã xử lý) theo cohort × measurement: số result và độ đầy đủ ước tính.
+    latest = (cov.filter("data_state <> 'not_processed'").groupBy("probe_set_version", "measurement_id")
+              .agg(F.max("event_hour_utc").alias("h")))
+    for r in cov.join(latest, ["probe_set_version", "measurement_id"]).filter(F.col("event_hour_utc") == F.col("h")).collect():
+        labels = {"probe_set_version": r["probe_set_version"], "measurement_id": str(r["measurement_id"])}
+        m.set("ripe_gold_latest_hour_results", "Số result của giờ gần nhất đã xử lý", r["results_total_raw"], **labels)
+        m.set("ripe_gold_latest_hour_completeness_ratio", "Độ đầy đủ ước tính của giờ gần nhất đã xử lý",
+              r["results_total_raw"] / r["expected_results"] if r["expected_results"] else 0, **labels)
+        m.set("ripe_gold_latest_hour_timestamp_seconds", "Giờ gần nhất đã xử lý (Unix giây)", r["h"].timestamp(), **labels)
+        m.set("ripe_gold_latest_hour_measured", "1 nếu giờ gần nhất đã xử lý có dữ liệu", 1 if r["data_state"] == "measured" else 0, **labels)
 
 
 if __name__ == "__main__":

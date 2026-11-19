@@ -13,10 +13,11 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 from ingestion.atlas_http import AtlasHttp, ResponseInfo
 from ingestion.config import MEASUREMENTS, REPORT_TZ, HttpSettings, IngestSettings, MeasurementSpec

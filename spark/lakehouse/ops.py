@@ -18,6 +18,7 @@ class DqRecorder:
     def __init__(self, spark: SparkSession, pipeline_run_id: str):
         self.spark, self.pipeline_run_id = spark, pipeline_run_id
         self.dq_run_id = new_run_id("dq")
+        self.failed = {"critical": 0, "warn": 0}
 
     def write(self, layer: str, table: str, scope: str, checks: list[dict], snapshot_id: int | None) -> None:
         now = datetime.now(timezone.utc)
@@ -27,6 +28,9 @@ class DqRecorder:
         schema = self.spark.table("nessie.ops.dq_result").schema
         self.spark.createDataFrame(rows, schema).writeTo("nessie.ops.dq_result").append()
         failed = [c["check_name"] for c in checks if not c["success"]]
+        for c in checks:
+            if not c["success"]:
+                self.failed[c["severity"]] = self.failed.get(c["severity"], 0) + 1
         log_event("dq", "recorded", table=table, scope=scope, checks=len(checks), failed=failed[:10])
 
 

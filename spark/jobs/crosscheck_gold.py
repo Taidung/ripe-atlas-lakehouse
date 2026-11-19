@@ -72,11 +72,11 @@ def main() -> int:
     print("\ncohort | msm | replies exact/hist | p50 exact/hist (rel err) | p95 | p99")
     worst = 0.0
     for r in sorted(exact.join(hist, ["cohort", "measurement_id"]).collect(), key=lambda r: (r.cohort, r.measurement_id)):
-        errs = [abs(h / e - 1) if e else 0.0 for e, h in zip(r.e, r.h)]
+        errs = [abs(h / e - 1) if e else 0.0 for e, h in zip(r.e, r.h, strict=True)]
         worst = max(worst, *errs)
         ok &= r.n == r.hn
         print(f"{r.cohort} | {r.measurement_id} | {r.n}/{r.hn} | " + " | ".join(
-            f"{e:.3f}/{h:.3f} ({err * 100:.2f}%)" for e, h, err in zip(r.e, r.h, errs)))
+            f"{e:.3f}/{h:.3f} ({err * 100:.2f}%)" for e, h, err in zip(r.e, r.h, errs, strict=True)))
     print(f"\nmax relative percentile error = {worst * 100:.2f}% (threshold {args.max_rel_error_percentile * 100:.1f}%)")
     ok &= worst <= args.max_rel_error_percentile
     print("PASS" if ok else "FAIL")

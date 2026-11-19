@@ -42,7 +42,7 @@ class StagingStore:
     credentials: AwsCredentials | None = None
 
     @classmethod
-    def from_settings(cls, settings: StagingSettings) -> "StagingStore":
+    def from_settings(cls, settings: StagingSettings) -> StagingStore:
         fs = fsspec.filesystem(
             "s3",
             key=settings.access_key,
@@ -58,7 +58,7 @@ class StagingStore:
         return cls(f"s3://{settings.bucket}", fs, credentials)
 
     @classmethod
-    def local(cls, directory: str) -> "StagingStore":
+    def local(cls, directory: str) -> StagingStore:
         """Đích trên đĩa local (file:// URI), dùng cho test offline với dlt thật."""
         from pathlib import Path
 

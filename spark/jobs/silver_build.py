@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 from pyspark.sql import DataFrame, SparkSession
@@ -22,10 +22,21 @@ from pyspark.sql import functions as F
 
 from lakehouse import quality
 from lakehouse.common import SQL_DIR, days_for_range, log_event, new_run_id, run_sql_file
+from lakehouse.metrics import job_metrics
 from lakehouse.ops import DqRecorder, latest_snapshot, set_partition_status
 from lakehouse.silver import (
-    MEASUREMENT_TRACKED, PROBE_TRACKED, asof_join, build_fact_reply, build_fact_result, build_scd2, dim_date,
-    dim_time, measurement_snapshots, probe_snapshots, select_result_versions, with_unknown_member,
+    MEASUREMENT_TRACKED,
+    PROBE_TRACKED,
+    asof_join,
+    build_fact_reply,
+    build_fact_result,
+    build_scd2,
+    dim_date,
+    dim_time,
+    measurement_snapshots,
+    probe_snapshots,
+    select_result_versions,
+    with_unknown_member,
 )
 
 REPORT_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -116,7 +127,7 @@ def build_day(spark: SparkSession, day: date, probe_dim: DataFrame, msm_dim: Dat
     dq.write("silver", REPLY, scope, checks_reply, reply_snapshot)
 
     if not post[0]["success"]:
-        status, reason = "blocked", f"post-write count mismatch; rollback with CALL nessie.system.rollback_to_snapshot"
+        status, reason = "blocked", "post-write count mismatch; rollback with CALL nessie.system.rollback_to_snapshot"
     elif quality.has_warning(all_checks):
         status, reason = "published_with_warnings", "; ".join(c["check_name"] for c in all_checks if not c["success"])[:900]
     else:
@@ -156,25 +167,42 @@ def main() -> int:
     spark = SparkSession.builder.appName("silver_build").getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
     run_id = new_run_id("silver")
-    try:
-        run_sql_file(spark, SQL_DIR / "silver" / "001_tables.sql")
-        run_sql_file(spark, SQL_DIR / "ops" / "001_tables.sql")
-        dq = DqRecorder(spark, run_id)
-        probe_dim, msm_dim = build_dims(spark, dq)
-        if args.dims_only:
-            return 0
-        if args.repair_unknown:
-            days = days_needing_repair(spark, probe_dim)
-        elif args.dates:
-            days = [date.fromisoformat(d.strip()) for d in args.dates.split(",") if d.strip()]
-        else:
-            days = days_for_range(args.start, args.end)
-        log_event("silver", "run_start", run_id=run_id, days=[str(d) for d in days])
-        results = {str(d): build_day(spark, d, probe_dim, msm_dim, run_id, dq) for d in days}
-        log_event("silver", "run_finished", run_id=run_id, results=results)
-        return 2 if "blocked" in results.values() else 0
-    finally:
-        spark.stop()
+    with job_metrics("silver") as m:
+        try:
+            run_sql_file(spark, SQL_DIR / "silver" / "001_tables.sql")
+            run_sql_file(spark, SQL_DIR / "ops" / "001_tables.sql")
+            dq = DqRecorder(spark, run_id)
+            try:
+                probe_dim, msm_dim = build_dims(spark, dq)
+                if args.dims_only:
+                    return 0
+                if args.repair_unknown:
+                    days = days_needing_repair(spark, probe_dim)
+                elif args.dates:
+                    days = [date.fromisoformat(d.strip()) for d in args.dates.split(",") if d.strip()]
+                else:
+                    days = days_for_range(args.start, args.end)
+                log_event("silver", "run_start", run_id=run_id, days=[str(d) for d in days])
+                results = {str(d): build_day(spark, d, probe_dim, msm_dim, run_id, dq) for d in days}
+                log_event("silver", "run_finished", run_id=run_id, results=results)
+                for status in ("published", "published_with_warnings", "blocked", "empty"):
+                    m.set("ripe_partition_days", "Số ngày theo trạng thái công bố, lần chạy gần nhất",
+                          sum(1 for r in results.values() if r == status), layer="silver", status=status)
+                if days:
+                    for r in (spark.table("nessie.ops.partition_status")
+                              .filter("table_name = 'nessie.silver.fact_ping_result'")
+                              .filter(F.col("ictrl_dt").isin(days)).groupBy("measurement_id")
+                              .agg(F.sum("row_count").alias("n")).collect()):
+                        m.set("ripe_silver_rows", "Số dòng fact_ping_result của các ngày vừa tính lại", r["n"] or 0,
+                              measurement_id=str(r["measurement_id"]))
+                m.ok = "blocked" not in results.values()
+                return 2 if "blocked" in results.values() else 0
+            finally:
+                for severity, n in dq.failed.items():
+                    m.set("ripe_dq_failed_checks", "Số kiểm tra chất lượng thất bại, lần chạy gần nhất", n,
+                          layer="silver", severity=severity)
+        finally:
+            spark.stop()
 
 
 if __name__ == "__main__":

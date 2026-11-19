@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any
 
 from ingestion.config import MeasurementSpec
 from ingestion.windows import Window
@@ -90,7 +91,7 @@ class PriorIndex:
             self.by_key.setdefault((probe_id, event_ts), set()).add(sha)
 
     @classmethod
-    def from_tsv(cls, texts: Iterable[str]) -> "PriorIndex":
+    def from_tsv(cls, texts: Iterable[str]) -> PriorIndex:
         index = cls()
         for text in texts:
             for line in text.splitlines():

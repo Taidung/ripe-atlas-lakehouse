@@ -4,9 +4,7 @@ from datetime import datetime, timedelta
 
 from pyspark.sql import SparkSession, Window
 from pyspark.sql.functions import col, concat_ws, get_json_object, row_number, sha2, timestamp_seconds, when
-
 from staging_to_bronze import UTC_PLUS_7
-
 
 SILVER = "nessie.silver"
 BRONZE = "nessie.bronze"

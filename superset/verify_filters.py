@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 
-from provision import Api, DB_NAME, axis
+from provision import Api, axis
 
 COHORT = "strat-k2-c100-v1"
 
@@ -74,7 +74,6 @@ def main() -> int:
 
     # 4. Timezone: khoảng giờ VN 09:00-10:00 == giờ UTC 02:00 trong coverage (results_eligible)
     vn = run(api, P, ["results"], filters=[cohort], time_range="2026-11-19T09:00:00 : 2026-11-19T10:00:00")[0]["results"]
-    cov = run(api, CV, ["results_excluded_clock"], columns=["event_hour_utc"], filters=[cohort])
     cov_09 = run(api, CV, [{"expressionType": "SQL", "sqlExpression": "SUM(results_eligible)", "label": "eligible"}],
                  filters=[cohort], time_range="2026-11-19T09:00:00 : 2026-11-19T10:00:00")[0]["eligible"]
     ok = vn == cov_09 and vn > 0

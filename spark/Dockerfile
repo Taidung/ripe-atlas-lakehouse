@@ -22,7 +22,7 @@ RUN set -eu; mkdir -p /opt/spark/extra-jars; cd /opt/spark/extra-jars; \
 
 # pytest để chạy test Spark trong container (PySpark 3.5.5 có sẵn trong image).
 # GX Core 1.25.0: đã kiểm tra cài cùng pandas 2.2.3 / numpy 1.26.4 / pyarrow 17.0.0 không đổi phiên bản.
-RUN pip install --no-cache-dir pytest==8.3.5 great_expectations==1.25.0
+RUN pip install --no-cache-dir pytest==8.3.5 great_expectations==1.25.0 prometheus-client==0.26.0
 
 # Giữ PYTHONPATH của image gốc (pyspark + py4j), thêm package lakehouse của đồ án.
 ENV PYTHONPATH=/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9.7-src.zip:/opt/app/spark

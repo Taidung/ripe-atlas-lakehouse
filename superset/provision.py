@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import uuid
 from pathlib import Path
 
 import requests
@@ -106,7 +105,8 @@ def ensure_dataset(api: Api, db_id: int, name: str, spec: dict) -> dict:
     existing = api.find("dataset", "table_name", name)
     body = {"database": db_id, "schema": SCHEMA, "table_name": name}
     if "sql" in spec:
-        body["sql"] = "\n".join(l for l in (PROJECT / spec["sql"]).read_text(encoding="utf-8").splitlines() if not l.strip().startswith("--"))
+        sql_lines = (PROJECT / spec["sql"]).read_text(encoding="utf-8").splitlines()
+        body["sql"] = "\n".join(line for line in sql_lines if not line.strip().startswith("--"))
     if existing:
         ds_id = existing["id"]
         if "sql" in spec:

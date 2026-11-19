@@ -60,7 +60,7 @@ class HttpSettings:
     concurrency: int = 2
 
     @classmethod
-    def from_env(cls) -> "HttpSettings":
+    def from_env(cls) -> HttpSettings:
         return cls(
             connect_timeout_s=_env_float("ATLAS_CONNECT_TIMEOUT_S", cls.connect_timeout_s, 1),
             read_timeout_s=_env_float("ATLAS_READ_TIMEOUT_S", cls.read_timeout_s, 1),
@@ -86,7 +86,7 @@ class StagingSettings:
         return f"s3://{self.bucket}/{DATASET_NAME}"
 
     @classmethod
-    def from_env(cls) -> "StagingSettings":
+    def from_env(cls) -> StagingSettings:
         settings = cls(
             bucket=os.environ.get("STAGING_BUCKET", cls.bucket),
             endpoint_url=os.environ.get("STAGING_S3_ENDPOINT", cls.endpoint_url),
@@ -106,7 +106,7 @@ class IngestSettings:
     overlap_hours: int = 3
 
     @classmethod
-    def from_env(cls) -> "IngestSettings":
+    def from_env(cls) -> IngestSettings:
         return cls(
             probe_set_version=os.environ.get("PROBE_SET_VERSION", cls.probe_set_version),
             probe_chunk_size=_env_int("PROBE_CHUNK_SIZE", cls.probe_chunk_size, 1),

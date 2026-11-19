@@ -22,10 +22,15 @@ from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
 from lakehouse.bronze import (
-    STAGED_METADATA_SCHEMA, STAGED_RESULT_SCHEMA, batch_integrity_errors, parse_staged,
-    transform_metadata, transform_results,
+    STAGED_METADATA_SCHEMA,
+    STAGED_RESULT_SCHEMA,
+    batch_integrity_errors,
+    parse_staged,
+    transform_metadata,
+    transform_results,
 )
 from lakehouse.common import SQL_DIR, STAGING_ROOT, glob_paths, log_event, new_run_id, path_exists, run_sql_file, to_s3, to_s3a
+from lakehouse.metrics import job_metrics
 
 REPORT_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 METADATA_ENTITIES = {
@@ -218,21 +223,26 @@ def main() -> None:
 
     spark = SparkSession.builder.appName(f"bronze_ingest_{args.entity}").getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
-    try:
-        run_sql_file(spark, SQL_DIR / "bronze" / "001_tables.sql")
-        entities = list(METADATA_ENTITIES) if args.entity == "metadata" else [args.entity]
-        for entity in entities:
-            if entity == "ping_result_raw":
-                globs = result_manifest_globs(args.start, args.end)
-            else:
-                globs = [f"{STAGING_ROOT}/_manifests/{entity}/ictrl_dt=*/*.json"]
-            todo = pending(spark, read_manifests(spark, globs), args.reprocess)
-            if not todo:
-                log_event("bronze", "nothing_pending", entity=entity)
-                continue
-            process(spark, entity, todo, args.max_quarantine_ratio)
-    finally:
-        spark.stop()
+    stage = "bronze_results" if args.entity == "ping_result_raw" else "bronze_metadata"
+    with job_metrics(stage) as m:
+        try:
+            run_sql_file(spark, SQL_DIR / "bronze" / "001_tables.sql")
+            entities = list(METADATA_ENTITIES) if args.entity == "metadata" else [args.entity]
+            for entity in entities:
+                if entity == "ping_result_raw":
+                    globs = result_manifest_globs(args.start, args.end)
+                else:
+                    globs = [f"{STAGING_ROOT}/_manifests/{entity}/ictrl_dt=*/*.json"]
+                todo = pending(spark, read_manifests(spark, globs), args.reprocess)
+                summary = process(spark, entity, todo, args.max_quarantine_ratio) if todo else {}
+                if not todo:
+                    log_event("bronze", "nothing_pending", entity=entity)
+                m.set("ripe_bronze_manifests", "Manifest được xử lý, lần chạy gần nhất", len(todo), entity=entity)
+                for kind in ("rows_read", "rows_inserted", "rows_already_present", "rows_quarantined"):
+                    m.set("ripe_bronze_rows", "Số dòng Bronze theo loại, lần chạy gần nhất", summary.get(kind, 0),
+                          entity=entity, kind=kind.removeprefix("rows_"))
+        finally:
+            spark.stop()
 
 
 if __name__ == "__main__":

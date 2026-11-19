@@ -1,0 +1,27 @@
+# Contract test với RIPE Atlas API thật: ít request, không phụ thuộc số lượng result. Chạy riêng, không chặn PR.
+name: live-api
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 6 * * 1"   # thứ Hai hằng tuần
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.26"
+      - run: uv sync --frozen
+      - run: uv run --frozen pytest -q -m live -o addopts="" tests/live --junitxml=reports/live.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-api-report
+          path: reports/

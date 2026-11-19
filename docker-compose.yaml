@@ -1,5 +1,14 @@
+# Log của mọi service: driver json-file, xoay vòng 10 MB x 5 file (~50 MB/service tối đa).
+# Tra cứu: docker compose logs <service> | grep '"run_id": "<id>"'
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   spark-iceberg:
+    logging: *default-logging
     # Spark 3.5.5 / Scala 2.12.18 / Java 17.0.14 / Iceberg 1.8.1 (đã đo trong container, xem docs/compatibility.md).
     # Build từ spark/Dockerfile: base tabulario/spark-iceberg pin digest + jar S3A nhúng sẵn.
     build: ./spark
@@ -12,6 +21,7 @@ services:
       AWS_ACCESS_KEY_ID: ${S3_PROCESSING_ACCESS_KEY:?Set S3_PROCESSING_ACCESS_KEY in .env}
       AWS_SECRET_ACCESS_KEY: ${S3_PROCESSING_SECRET_KEY:?Set S3_PROCESSING_SECRET_KEY in .env}
       AWS_REGION: us-east-1
+      PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-http://pushgateway:9091}
     volumes:
       - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       # Mã nguồn mount chỉ đọc: job ở /opt/app/spark/jobs, package dùng chung ở /opt/app/spark/lakehouse.
@@ -32,6 +42,7 @@ services:
         condition: service_completed_successfully
 
   nessie:
+    logging: *default-logging
     image: ghcr.io/projectnessie/nessie:0.108.8@sha256:aee5e959530b60d5e9bceb444e0b0edc8cb3cadd74a3a3e930e28591288d60da
     restart: unless-stopped
     ports:
@@ -55,6 +66,7 @@ services:
       - lakehouse
 
   postgres:
+    logging: *default-logging
     image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     restart: unless-stopped
     environment:
@@ -72,6 +84,7 @@ services:
       - lakehouse
 
   master:
+    logging: *default-logging
     image: chrislusf/seaweedfs@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 # SeaweedFS 4.53
     restart: unless-stopped
     ports:
@@ -96,6 +109,7 @@ services:
       - lakehouse
 
   volume:
+    logging: *default-logging
     image: chrislusf/seaweedfs@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 # SeaweedFS 4.53
     restart: unless-stopped
     ports:
@@ -126,6 +140,7 @@ services:
       - lakehouse
   
   filer:
+    logging: *default-logging
     image: chrislusf/seaweedfs@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 # SeaweedFS 4.53
     restart: unless-stopped
     ports:
@@ -156,6 +171,7 @@ services:
       - lakehouse
   
   s3:
+    logging: *default-logging
     image: chrislusf/seaweedfs@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 # SeaweedFS 4.53
     restart: unless-stopped
     ports:
@@ -167,6 +183,7 @@ services:
       - -ip.bind=0.0.0.0
       - -port=8333
       - -port.iceberg=0
+      - -metricsPort=9327
       - -port.lance=0
       - -config=/etc/seaweedfs/s3.json
     env_file: .env
@@ -189,6 +206,7 @@ services:
       - lakehouse
 
   init-buckets:
+    logging: *default-logging
     image: amazon/aws-cli:2.27.41@sha256:bc6b7bba44ce38f9604ede49c584824af919047ea03fbcc7c7610671fdef95d8
     entrypoint: ["/bin/sh", "-ec"]
     environment:
@@ -210,6 +228,7 @@ services:
   # ---------------------------------------------------------------- jobs
   # Job ingestion chạy theo lệnh: docker compose run --rm ingestion <command> ...
   ingestion:
+    logging: *default-logging
     build:
       context: .
       dockerfile: ingestion/Dockerfile
@@ -224,6 +243,7 @@ services:
       PROBE_SET_VERSION: ${PROBE_SET_VERSION:-dev-200-v1}
       OVERLAP_HOURS: ${OVERLAP_HOURS:-3}
       ATLAS_CONCURRENCY: ${ATLAS_CONCURRENCY:-2}
+      PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-http://pushgateway:9091}
     volumes:
       # Mount để sinh probe set mới vào repo và dùng code mới nhất mà không cần build lại.
       - ./config:/opt/app/config
@@ -237,6 +257,7 @@ services:
 
   # ---------------------------------------------------------------- analytics
   trino:
+    logging: *default-logging
     image: trinodb/trino:484@sha256:2704eb53935af5e582d63d6033e9bf99d20c325e9b0e30b1016ef59a4773979f
     profiles: ["analytics", "all"]
     restart: unless-stopped
@@ -265,6 +286,7 @@ services:
       - lakehouse
 
   superset-db:
+    logging: *default-logging
     image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     profiles: ["analytics", "all"]
     restart: unless-stopped
@@ -283,6 +305,7 @@ services:
       - lakehouse
 
   superset-init:
+    logging: *default-logging
     build: ./superset
     image: ripe-atlas-superset:6.1.0
     profiles: ["analytics", "all"]
@@ -307,6 +330,7 @@ services:
       - lakehouse
 
   superset:
+    logging: *default-logging
     image: ripe-atlas-superset:6.1.0
     profiles: ["analytics", "all"]
     restart: unless-stopped
@@ -327,6 +351,258 @@ services:
     networks:
       - lakehouse
 
+  # ---------------------------------------------------------------- orchestration
+  airflow-db:
+    logging: *default-logging
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    profiles: ["orchestration", "all"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:?Set AIRFLOW_DB_PASSWORD in .env}
+    volumes:
+      - airflow_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lakehouse
+
+  # Airflow standalone (api-server + scheduler + dag-processor + triggerer trong một container, LocalExecutor).
+  # docker.sock được mount để task tạo container ingestion và exec spark-submit: quyền tương đương root trên Docker
+  # host, chấp nhận cho môi trường đồ án local (docs/adr/0002-orchestration.md).
+  airflow:
+    logging: *default-logging
+    image: apache/airflow:3.4.0-python3.11@sha256:be92e15d57c5be726fc39a91cd09cce8f7488483b67979e0fb74c1a2c7cfb4e2
+    profiles: ["orchestration", "all"]
+    restart: unless-stopped
+    command: >
+      bash -c "airflow db migrate &&
+               airflow pools set lakehouse_writer 1 'Task ghi Iceberg: tránh ghi đồng thời giữa lịch chạy và backfill' &&
+               airflow pools set atlas_api 1 'Task gọi RIPE Atlas API' &&
+               mkdir -p /opt/airflow/logs/.auth && exec airflow standalone"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?Set AIRFLOW_FERNET_KEY in .env}
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?Set AIRFLOW_JWT_SECRET in .env}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: utc
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/logs/.auth/simple_auth_manager_passwords.json
+      # Task runner gọi Execution API qua base_url: phải là cổng TRONG container (8080), không phải cổng host 8090.
+      AIRFLOW__API__BASE_URL: http://localhost:8080
+      AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "60"
+      # Biến chuyển tiếp cho container ingestion (chỉ khóa ghi staging; không có khóa Spark/Trino/admin).
+      S3_INGEST_ACCESS_KEY: ${S3_INGEST_ACCESS_KEY}
+      S3_INGEST_SECRET_KEY: ${S3_INGEST_SECRET_KEY}
+      STAGING_S3_ENDPOINT: http://s3:8333
+      STAGING_BUCKET: staging
+      PROBE_SET_VERSION: ${PROBE_SET_VERSION:-dev-200-v1}
+      OVERLAP_HOURS: ${OVERLAP_HOURS:-3}
+      ATLAS_CONCURRENCY: ${ATLAS_CONCURRENCY:-2}
+      PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-http://pushgateway:9091}
+      LAKEHOUSE_NETWORK: ripe-atlas-lakehouse_lakehouse
+      SPARK_CONTAINER: ripe-atlas-lakehouse-spark-iceberg-1
+      INGEST_IMAGE: ripe-atlas-ingestion:0.2
+    ports:
+      - "8090:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags:ro
+      - airflow_logs:/opt/airflow/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+    mem_limit: 2g
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+    networks:
+      - lakehouse
+
+  # ---------------------------------------------------------------- governance (OpenMetadata)
+  # OM 2.0.8 không kèm Airflow riêng (PIPELINE_SERVICE_CLIENT_ENABLED=false); ingestion metadata chạy bằng container
+  # om-ingestion (openmetadata-ingestion 2.0.8.0) qua governance/run_ingestion.py.
+  om-db:
+    logging: *default-logging
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    profiles: ["governance", "all"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: openmetadata_db
+      POSTGRES_USER: openmetadata_user
+      POSTGRES_PASSWORD: ${OM_DB_PASSWORD:?Set OM_DB_PASSWORD in .env}
+    volumes:
+      - om_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openmetadata_user -d openmetadata_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lakehouse
+
+  om-search:
+    logging: *default-logging
+    image: opensearchproject/opensearch:2.19.2@sha256:69588c664014fa3d3260ed5dd337f8538fec94790dad00bfbe92301eaaaac240
+    profiles: ["governance", "all"]
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+    volumes:
+      - om_search_data:/usr/share/opensearch/data
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health | grep -qE 'green|yellow'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    networks:
+      - lakehouse
+
+  om-migrate:
+    logging: *default-logging
+    image: openmetadata/server:2.0.8@sha256:df3c3fef9014c23876f04b06db14b9556a63fc5fd8777ab7ddb80d41e4230ab4
+    profiles: ["governance", "all"]
+    command: ["./bootstrap/openmetadata-ops.sh", "migrate"]
+    environment: &om_env
+      DB_DRIVER_CLASS: org.postgresql.Driver
+      DB_SCHEME: postgresql
+      DB_HOST: om-db
+      DB_PORT: "5432"
+      DB_USER: openmetadata_user
+      DB_USER_PASSWORD: ${OM_DB_PASSWORD}
+      OM_DATABASE: openmetadata_db
+      DB_PARAMS: allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC
+      SEARCH_TYPE: opensearch
+      ELASTICSEARCH_HOST: om-search
+      ELASTICSEARCH_PORT: "9200"
+      ELASTICSEARCH_SCHEME: http
+      PIPELINE_SERVICE_CLIENT_ENABLED: "false"
+      OPENMETADATA_HEAP_OPTS: -Xmx1G -Xms1G
+    depends_on:
+      om-db:
+        condition: service_healthy
+      om-search:
+        condition: service_healthy
+    networks:
+      - lakehouse
+
+  om-server:
+    logging: *default-logging
+    image: openmetadata/server:2.0.8@sha256:df3c3fef9014c23876f04b06db14b9556a63fc5fd8777ab7ddb80d41e4230ab4
+    profiles: ["governance", "all"]
+    restart: unless-stopped
+    environment: *om_env
+    ports:
+      - "8585:8585"
+    mem_limit: 1600m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8586/healthcheck || curl -fs http://localhost:8586/healthcheck"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      om-migrate:
+        condition: service_completed_successfully
+    networks:
+      - lakehouse
+
+  om-ingestion:
+    logging: *default-logging
+    build: ./governance
+    image: ripe-atlas-om-ingestion:2.0.8.0
+    profiles: ["governance", "all"]
+    command: ["python", "/app/governance/run_ingestion.py"]
+    environment:
+      OM_HOST: http://om-server:8585
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD}
+    volumes:
+      - ./governance:/app/governance:ro
+      - ./superset/metrics.json:/app/superset/metrics.json:ro
+    depends_on:
+      om-server:
+        condition: service_healthy
+    networks:
+      - lakehouse
+
+  # ---------------------------------------------------------------- monitoring
+  pushgateway:
+    logging: *default-logging
+    image: prom/pushgateway:v1.11.4
+    profiles: ["monitoring", "all"]
+    restart: unless-stopped
+    command: ["--persistence.file=/data/pushgateway.db", "--persistence.interval=1m"]
+    ports:
+      - "9091:9091"
+    volumes:
+      - pushgateway_data:/data
+    networks:
+      - lakehouse
+
+  prometheus:
+    logging: *default-logging
+    image: prom/prometheus:v3.16.0
+    profiles: ["monitoring", "all"]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=2GB
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    mem_limit: 512m
+    networks:
+      - lakehouse
+
+  grafana:
+    logging: *default-logging
+    image: grafana/grafana:13.3.1
+    profiles: ["monitoring", "all"]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    mem_limit: 512m
+    depends_on:
+      - prometheus
+    networks:
+      - lakehouse
+
+  # cAdvisor (gcr.io v0.52.1 và ghcr.io v0.53.0) đã thử và bị loại: trên Docker Desktop 29 với containerd
+  # snapshotter, cAdvisor không đọc được container ("failed to identify the read-write layer").
+  # RAM theo container: docker stats (docs/runbook.md). CPU/RAM/disk của VM Docker: node-exporter.
+  node-exporter:
+    logging: *default-logging
+    image: prom/node-exporter:v1.10.2
+    profiles: ["monitoring", "all"]
+    restart: unless-stopped
+    command: ["--path.rootfs=/host"]
+    volumes:
+      - /:/host:ro
+    networks:
+      - lakehouse
+
 networks:
   lakehouse:
     driver: bridge
@@ -337,3 +613,10 @@ volumes:
   filer_data:
   postgres_data:
   superset_db_data:
+  pushgateway_data:
+  prometheus_data:
+  grafana_data:
+  airflow_db_data:
+  airflow_logs:
+  om_db_data:
+  om_search_data:

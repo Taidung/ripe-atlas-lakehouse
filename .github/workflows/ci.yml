@@ -1,0 +1,70 @@
+# PR check: offline, xác định (deterministic), không gọi RIPE Atlas API, không cần secrets.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.26"
+          enable-cache: true
+      - name: Cài dependency theo uv.lock
+        run: uv sync --frozen
+      - name: Lint (ruff)
+        run: uv run --frozen ruff check ingestion tests spark superset airflow monitoring
+      - name: Kiểm tra cấu hình Compose (mọi profile, giá trị mẫu)
+        run: |
+          cp .env.example .env
+          docker compose --profile all config -q
+      - name: Kiểm tra file cấu hình JSON/YAML
+        run: |
+          uv run --frozen python -c "import json,glob; [json.load(open(p, encoding='utf-8')) for p in glob.glob('config/probe_sets/*.json') + ['superset/metrics.json', 'monitoring/grafana/dashboards/ripe-pipeline.json']]"
+          uv run --frozen python monitoring/grafana/build_dashboard.py && git diff --exit-code monitoring/grafana/dashboards/
+      - name: Unit + contract test (offline)
+        run: uv run --frozen pytest -q --junitxml=reports/unit.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-report
+          path: reports/
+
+  spark-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image Spark (jar pin SHA-256, GX, pytest)
+        uses: docker/build-push-action@v6
+        with:
+          context: spark
+          load: true
+          tags: ripe-atlas-spark:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Test Spark (Bronze/Silver/Gold, GX) trong container
+        run: |
+          mkdir -p reports
+          docker run --rm -v "$PWD:/opt/app" -w /opt/app ripe-atlas-spark:ci \
+            python -m pytest -q -p no:cacheprovider tests/spark --junitxml=reports/spark.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spark-test-report
+          path: reports/

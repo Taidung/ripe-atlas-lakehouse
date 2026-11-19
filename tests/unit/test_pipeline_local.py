@@ -154,3 +154,24 @@ def test_measurement_metadata_must_match_config(tmp_path, results_1001):
     bad = {1001: {"id": 1001, "af": 6, "type": "ping"}}
     with pytest.raises(ValueError, match="disagrees"):
         run_measurement_metadata(make_ctx(tmp_path, FakeAtlas(results_1001, measurements=bad), "run-2"), [1001])
+
+
+def test_cleanup_finds_only_unreferenced_old_objects(tmp_path, results_1001, monkeypatch):
+    from datetime import timedelta
+
+    from ingestion.cleanup import find_orphans, run_cleanup
+
+    ctx = make_ctx(tmp_path, FakeAtlas(results_1001), "run-1")
+    manifest = run_results_window(ctx, 1001, W13)
+    referenced = manifest["objects"][0]["path"]
+    orphan_dir = f"{ctx.store.root}/ping_result_raw/window_date=2026-11-18/window_hour=20/msm_id=1001"
+    orphan = f"{orphan_dir}/9999.orphan.jsonl.gz"
+    ctx.store.write_gzip_text(orphan, "{}\n")
+    # Mốc "now" tiêm vào để test không phụ thuộc độ phân giải mtime của hệ điều hành.
+    later = datetime.now(timezone.utc) + timedelta(hours=1)
+    found, _ = find_orphans(ctx.store, timedelta(hours=0), now=later)
+    assert [p.replace("\\", "/").split("/")[-1] for p in found] == ["9999.orphan.jsonl.gz"]
+    assert find_orphans(ctx.store, timedelta(hours=48), now=later)[0] == []          # còn mới -> không động vào
+    assert run_cleanup(ctx.store, 0, apply=False, now=later) and ctx.store.fs.exists(orphan)   # dry-run không xóa
+    run_cleanup(ctx.store, 0, apply=True, now=later)
+    assert not ctx.store.fs.exists(orphan) and ctx.store.fs.exists(referenced)
