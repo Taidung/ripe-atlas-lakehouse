@@ -57,6 +57,32 @@ Mọi số liệu dưới đây là **số đo thật** trong ngày 2026-11-18/1
 | RAM nhàn rỗi | Core ≈ 1,4 GB; Trino 0,9–2,3 GB (heap tối đa 2,4 GB); Superset 0,25 GB; monitoring ≈ 0,5 GB; Airflow 0,15 GB; OpenMetadata ≈ 2,1 GB (server 1 GB + OpenSearch 1 GB + DB) |
 | File Iceberg | Bronze sau 6 lần nạp theo giờ: 6–8 file mỗi partition ngày, mỗi file ~200 KB → compaction hằng ngày |
 
+### 3.1 Thử bật full stack khi Spark không chạy thường trực (2026-11-19)
+
+Mục đích: xem bỏ container Spark thường trực (hoặc thay Spark bằng dbt + Trino) có đủ chỗ cho full stack không.
+
+Cách đo:
+- Script lấy mẫu mỗi 5 giây ba chỉ số:
+  - tổng RAM container (`docker stats`)
+  - `MemAvailable` của VM Docker
+  - `Available MBytes` của Windows
+- Bật từng nhóm service; tự dừng khi Windows hoặc VM còn dưới 400 MB.
+
+| Thời điểm | Service đang chạy | Container | VM còn trống | Windows còn trống |
+|---|---|---|---|---|
+| Trước khi bật | core + monitoring, Spark **tắt** | 1,2 GiB | 5,6 GiB | 1,0 GB |
+| +45 giây | + Trino + Superset | 1,9–2,3 GiB | 4,6–4,8 GiB | **45–340 MB** → dừng |
+| Sau khi dừng analytics | core + monitoring | 1,2 GiB | 5,6 GiB | 1,5–1,7 GB |
+
+Kết luận:
+- **Nút thắt là RAM của Windows, không phải giới hạn 8,2 GB của Docker.** Khi container dùng 2,3 GiB, VM vẫn còn 4,6 GiB trống, nhưng Windows đã gần cạn.
+  - `vmmemWSL` giữ 5,9–6,3 GB dù container chỉ dùng 1,2–2,3 GiB: Linux dùng phần còn lại làm cache và WSL không trả ngay cho Windows.
+  - Các ứng dụng khác trên máy dùng khoảng 6 GB (trình duyệt, ứng dụng chat, Claude, Defender, …).
+- Bỏ Spark thường trực (≈ 0,95 GiB) hay thay Spark bằng dbt + Trino **không đủ** để bật full stack trên máy này khi các ứng dụng trên vẫn mở. Chưa đo được Airflow, OpenMetadata, hay đỉnh RAM của job Spark trong cấu hình full stack, vì thử nghiệm đã dừng ở bước analytics.
+- Hướng khả thi:
+  - Tiếp tục chạy tuần tự từng nhóm (như các phase trước).
+  - Hoặc đóng bớt ứng dụng nặng trên Windows và đặt `autoMemoryReclaim=dropCache` trong `.wslconfig` để WSL trả cache về cho Windows, rồi đo lại.
+
 ## 4. OpenMetadata (2.0.8, kiểm tra bằng API)
 
 - **Connector Trino:** 100% thành công (26 bản ghi; 9 bảng legacy bị lọc như cấu hình).
