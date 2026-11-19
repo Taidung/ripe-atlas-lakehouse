@@ -161,3 +161,53 @@
 1. Metric dictionary trước khi xây marts.
 2. Các Gold mart: theo giờ × measurement/af; theo quốc gia; theo ASN; theo probe; so sánh IPv4/IPv6 theo paired cohort; coverage. Lưu sẵn tử số/mẫu số và sketch để tính percentile gộp được.
 3. Dashboard Superset "Global Network Quality" (provisioning tái lập được).
+
+## Phiên 2026-11-19: Giai đoạn 4 (Gold, Trino, Superset)
+
+### Đã làm, có bằng chứng
+
+- **Viết trước khi xây mart:**
+  - `docs/metric-dictionary.md`: tử số, mẫu số, cách xử lý `NULL`, khả năng cộng dồn, quy tắc ghép cặp IPv4/IPv6, cách tính độ đầy đủ ước tính.
+  - `superset/metrics.json`: biểu thức metric dùng chung cho test và dashboard.
+- **7 Gold mart** (`spark/lakehouse/gold.py`, `spark/jobs/gold_build.py`):
+  - Các mart: target, country, ASN, probe, histogram RTT, cặp IPv4/IPv6, coverage (lưới đủ 24 giờ).
+  - Chỉ đọc partition Silver đã công bố. Ghi bằng overwrite theo ngày. Trạng thái công bố lưu ở `ops.partition_status`.
+- **Đo đạc trước khi thiết kế:**
+  - Khoảng cách thời gian giữa result v4 và v6 gần nhất của cùng probe: p50 64 s, p90 110 s, 98,5% ≤ 120 s. Từ đó chọn ngưỡng ghép cặp 120 s.
+  - Histogram log ×1.02 cho sai số percentile ≤ 0,95% so với giá trị chính xác (đo bằng Spark trên ~950 nghìn reply). Qua `approx_percentile` của Trino thì sai số ≈ 1–1,6%.
+- **Test:** 32 test Spark pass, trong đó 7 test Gold:
+  - Loss tính từ tổng, không lấy trung bình tỷ lệ.
+  - Mẫu số bằng 0 cho `NULL`; rollup giờ → ngày.
+  - Percentile, ghép cặp mutual nearest, lưới coverage, tính nhất quán giữa các mart.
+- **Chạy thật ngày 2026-11-19:**
+  - Gold `published`, 17/17 kiểm tra đạt.
+  - `crosscheck_gold.py` **PASS**: KPI của Gold khớp phép tính độc lập từ Silver ở cả 8 nhóm (cohort × measurement); sai số percentile lớn nhất 0,95%.
+- **Superset:**
+  - `provision.py` dựng 9 dataset, 23 chart và dashboard; 22/22 chart dùng API mới chạy truy vấn thành công. Xuất ZIP.
+  - Kiểm tra bằng trình duyệt: mọi chart render, không chart nào lỗi.
+  - `verify_filters.py` đạt 10/10 kiểm tra: tổ hợp filter, rollup, timezone, p95.
+- **Phát hiện từ dữ liệu:**
+  - Trên cặp cùng probe (K-root, 39.657 cặp): loss IPv6 10,16% so với IPv4 2,33%, RTT gần như bằng nhau.
+  - Kiểm tra "suy giảm" bằng cách so tổng nhóm bị sai do thành phần probe thay đổi (104 quốc gia "giả"). Đã chuyển sang so cùng probe, còn 8.
+
+### Sự cố trong phiên
+
+- Một truy vấn chẩn đoán quá nặng (`approx_percentile` với accuracy 0,0001 trên ~800 nghìn reply) làm Trino chạy ở 2 GB / ~700% CPU nhiều phút.
+  - Hệ thống chặn thao tác kill query, nên đã tạo lại container Trino. Trino không giữ state; dữ liệu nằm trong Iceberg/Nessie.
+  - Đã thêm `trino/config.properties` để không tái diễn: `query.max-execution-time=5m`, `query.max-run-time=10m`, `query.max-memory=1GB`, `query.client.timeout=2m`. `mem_limit` tăng lên 3 GB.
+
+### Còn thiếu hoặc rủi ro
+
+- Dữ liệu mới có khoảng 5 giờ (dev) và 1 giờ đầy đủ (strat). Ngưỡng "suy giảm" và hình dạng heatmap cần ≥ 24 giờ dữ liệu ổn định để có ý nghĩa.
+- Tooltip của bản đồ chỉ có 2 metric; chi tiết nằm ở bảng quốc gia đặt cạnh.
+- Filter thời gian tương đối lệch 7 giờ vì cột thời gian theo giờ VN; nên dùng khoảng tuyệt đối.
+- Chưa có tên quốc gia hay tên ASN (cần chủ đồ án duyệt nguồn tham chiếu).
+- Chưa có điều phối (Airflow), observability, OpenMetadata và CI: thuộc giai đoạn 5.
+
+### Bước tiếp theo: giai đoạn 5
+
+1. Airflow (profile `orchestration`): DAG theo giờ ingestion → Bronze → Silver → Gold, reconciliation và backfill, `--repair-unknown` sau mỗi lần cập nhật metadata.
+2. Prometheus/Pushgateway/Grafana: metric job, độ tươi, DQ; alert kèm runbook.
+3. OpenMetadata: metadata Trino/Superset và lineage.
+4. GitHub Actions: lint, unit test, Spark test, smoke test.
+5. Compaction, expire snapshot, retention staging.

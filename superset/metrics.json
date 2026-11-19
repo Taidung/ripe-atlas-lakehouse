@@ -1,0 +1,39 @@
+{
+  "_doc": "Biểu thức metric dùng chung: Superset provisioning và test Spark (tests/spark/test_gold.py) cùng đọc file này. Định nghĩa: docs/metric-dictionary.md. Chỉ dùng cú pháp chạy được trên cả Trino lẫn Spark SQL, trừ các metric có 'trino_only': true.",
+  "quality": {
+    "results": {"label": "Số result", "expression": "SUM(results_total)", "format": ",d"},
+    "results_measured": {"label": "Số result đã đo được (sent > 0)", "expression": "SUM(results_measured)", "format": ",d"},
+    "results_all_lost": {"label": "Số result mất toàn bộ packet", "expression": "SUM(results_all_lost)", "format": ",d"},
+    "packets_sent": {"label": "Packet gửi", "expression": "SUM(packets_sent)", "format": ",d"},
+    "packet_loss_pct": {"label": "Packet loss (%)", "expression": "100 * CAST(SUM(packets_lost) AS DOUBLE) / NULLIF(SUM(packets_sent), 0)", "format": ".2f"},
+    "response_rate_observed_pct": {"label": "Tỷ lệ result có phản hồi trên result đã đo (%)", "expression": "100 * CAST(SUM(results_with_response) AS DOUBLE) / NULLIF(SUM(results_measured), 0)", "format": ".2f"},
+    "all_lost_rate_pct": {"label": "Tỷ lệ result mất toàn bộ (%)", "expression": "100 * CAST(SUM(results_all_lost) AS DOUBLE) / NULLIF(SUM(results_measured), 0)", "format": ".2f"},
+    "rtt_mean_ms": {"label": "RTT trung bình theo packet (ms)", "expression": "CAST(SUM(rtt_sum_ms) AS DOUBLE) / NULLIF(SUM(rtt_count), 0)", "format": ".2f"},
+    "rtt_stddev_ms": {"label": "Độ lệch chuẩn RTT theo packet (ms)", "expression": "SQRT(GREATEST(SUM(rtt_sumsq_ms2) / NULLIF(SUM(rtt_count), 0) - POWER(SUM(rtt_sum_ms) / NULLIF(SUM(rtt_count), 0), 2), 0))", "format": ".2f"},
+    "rtt_min_ms": {"label": "RTT nhỏ nhất (ms)", "expression": "MIN(rtt_min_ms)", "format": ".2f"},
+    "rtt_max_ms": {"label": "RTT lớn nhất (ms)", "expression": "MAX(rtt_max_ms)", "format": ".2f"}
+  },
+  "histogram": {
+    "rtt_p50_ms": {"label": "p50 RTT theo packet (ms, xấp xỉ từ histogram)", "expression": "approx_percentile(bucket_rep_ms, reply_count, 0.5)", "trino_only": true, "format": ".2f"},
+    "rtt_p95_ms": {"label": "p95 RTT theo packet (ms, xấp xỉ từ histogram)", "expression": "approx_percentile(bucket_rep_ms, reply_count, 0.95)", "trino_only": true, "format": ".2f"},
+    "rtt_p99_ms": {"label": "p99 RTT theo packet (ms, xấp xỉ từ histogram)", "expression": "approx_percentile(bucket_rep_ms, reply_count, 0.99)", "trino_only": true, "format": ".2f"},
+    "rtt_samples": {"label": "Số reply có RTT hợp lệ", "expression": "SUM(reply_count)", "format": ",d"}
+  },
+  "paired": {
+    "pairs": {"label": "Số cặp IPv4/IPv6", "expression": "SUM(pairs)", "format": ",d"},
+    "v4_rtt_mean_ms": {"label": "RTT IPv4 trên cặp (ms)", "expression": "SUM(v4_rtt_sum_ms) / NULLIF(SUM(v4_rtt_count), 0)", "format": ".2f"},
+    "v6_rtt_mean_ms": {"label": "RTT IPv6 trên cặp (ms)", "expression": "SUM(v6_rtt_sum_ms) / NULLIF(SUM(v6_rtt_count), 0)", "format": ".2f"},
+    "delta_rtt_v6_minus_v4_ms": {"label": "Chênh RTT IPv6 − IPv4 (ms)", "expression": "CAST(SUM(v6_rtt_sum_ms) AS DOUBLE) / NULLIF(SUM(v6_rtt_count), 0) - CAST(SUM(v4_rtt_sum_ms) AS DOUBLE) / NULLIF(SUM(v4_rtt_count), 0)", "format": ".2f"},
+    "v4_packet_loss_pct": {"label": "Loss IPv4 trên cặp (%)", "expression": "100 * CAST(SUM(v4_packets_lost) AS DOUBLE) / NULLIF(SUM(v4_packets_sent), 0)", "format": ".2f"},
+    "v6_packet_loss_pct": {"label": "Loss IPv6 trên cặp (%)", "expression": "100 * CAST(SUM(v6_packets_lost) AS DOUBLE) / NULLIF(SUM(v6_packets_sent), 0)", "format": ".2f"},
+    "unpaired_v4": {"label": "Result IPv4 không có cặp", "expression": "SUM(unpaired_v4_results)", "format": ",d"},
+    "unpaired_v6": {"label": "Result IPv6 không có cặp", "expression": "SUM(unpaired_v6_results)", "format": ",d"}
+  },
+  "coverage": {
+    "expected_results": {"label": "Result kỳ vọng (ước tính)", "expression": "SUM(expected_results)", "format": ",d"},
+    "completeness_est_pct": {"label": "Độ đầy đủ ước tính (%)", "expression": "100 * CAST(SUM(results_total_raw) AS DOUBLE) / NULLIF(SUM(expected_results), 0)", "format": ".1f"},
+    "results_excluded_clock": {"label": "Result loại do đồng hồ probe lệch", "expression": "SUM(results_excluded_clock)", "format": ",d"},
+    "results_excluded_not_public": {"label": "Result loại do probe không công khai", "expression": "SUM(results_excluded_not_public)", "format": ",d"},
+    "quarantine_records": {"label": "Bản ghi quarantine", "expression": "SUM(quarantine_records)", "format": ",d"}
+  }
+}

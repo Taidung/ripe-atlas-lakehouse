@@ -21,7 +21,8 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from lakehouse import quality
-from lakehouse.common import SQL_DIR, log_event, new_run_id, run_sql_file
+from lakehouse.common import SQL_DIR, days_for_range, log_event, new_run_id, run_sql_file
+from lakehouse.ops import DqRecorder, latest_snapshot, set_partition_status
 from lakehouse.silver import (
     MEASUREMENT_TRACKED, PROBE_TRACKED, asof_join, build_fact_reply, build_fact_result, build_scd2, dim_date,
     dim_time, measurement_snapshots, probe_snapshots, select_result_versions, with_unknown_member,
@@ -39,45 +40,8 @@ def parse_instant(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def days_for_range(start: datetime, end: datetime) -> list[date]:
-    first = start.astimezone(REPORT_TZ).date()
-    last = (end - timedelta(microseconds=1)).astimezone(REPORT_TZ).date()
-    return [first + timedelta(days=i) for i in range((last - first).days + 1)]
-
-
-def latest_snapshot(spark: SparkSession, table: str) -> int | None:
-    row = spark.sql(f"SELECT snapshot_id FROM {table}.snapshots ORDER BY committed_at DESC LIMIT 1").first()
-    return row[0] if row else None
-
-
 def table_columns(spark: SparkSession, table: str) -> list[str]:
     return [f.name for f in spark.table(table).schema.fields]
-
-
-class DqRecorder:
-    def __init__(self, spark: SparkSession, pipeline_run_id: str):
-        self.spark, self.pipeline_run_id = spark, pipeline_run_id
-        self.dq_run_id = new_run_id("dq")
-
-    def write(self, layer: str, table: str, scope: str, checks: list[dict], snapshot_id: int | None) -> None:
-        now = datetime.now(timezone.utc)
-        rows = [(self.dq_run_id, self.pipeline_run_id, layer, table, scope, c["check_name"], c["engine"], c["severity"],
-                 c["success"], c["observed_value"], c["unexpected_count"], c["element_count"], c["details"], snapshot_id, now)
-                for c in checks]
-        schema = self.spark.table("nessie.ops.dq_result").schema
-        self.spark.createDataFrame(rows, schema).writeTo("nessie.ops.dq_result").append()
-        failed = [c["check_name"] for c in checks if not c["success"]]
-        log_event("dq", "recorded", table=table, scope=scope, checks=len(checks), failed=failed[:10])
-
-
-def set_partition_status(spark: SparkSession, rows: list[tuple]) -> None:
-    schema = spark.table("nessie.ops.partition_status").schema
-    spark.createDataFrame(rows, schema).createOrReplaceTempView("src_status")
-    spark.sql("""
-        MERGE INTO nessie.ops.partition_status t USING src_status s
-        ON t.table_name = s.table_name AND t.ictrl_dt = s.ictrl_dt AND t.measurement_id = s.measurement_id
-        WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *
-    """)
 
 
 # ---------------------------------------------------------------------------- dims

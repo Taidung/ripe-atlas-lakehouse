@@ -13,6 +13,17 @@ STAGING_ROOT = "s3://staging/ripe_atlas"
 SQL_DIR = Path("/opt/app/sql")
 
 
+def days_for_range(start, end) -> list:
+    """Các ngày Asia/Ho_Chi_Minh chạm vào khoảng [start, end) (datetime có múi giờ)."""
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Asia/Ho_Chi_Minh")
+    first = start.astimezone(tz).date()
+    last = (end - timedelta(microseconds=1)).astimezone(tz).date()
+    return [first + timedelta(days=i) for i in range((last - first).days + 1)]
+
+
 def to_s3a(path: str) -> str:
     return "s3a://" + path[len("s3://"):] if path.startswith("s3://") else path
 

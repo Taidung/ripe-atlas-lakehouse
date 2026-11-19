@@ -19,6 +19,8 @@ services:
       - ./sql:/opt/app/sql:ro
       - ./tests:/opt/app/tests:ro
       - ./config:/opt/app/config:ro
+      # metrics.json dùng chung với Superset provisioning (test Gold đọc cùng định nghĩa).
+      - ./superset:/opt/app/superset:ro
       # Kết quả GX (validation results, Data Docs HTML); không commit.
       - ./artifacts:/opt/app/artifacts
     networks:
@@ -246,7 +248,8 @@ services:
       S3_SERVING_SECRET_KEY: ${S3_SERVING_SECRET_KEY:?Set S3_SERVING_SECRET_KEY in .env}
     volumes:
       - ./trino/catalog:/etc/trino/catalog:ro
-    mem_limit: 2g
+      - ./trino/config.properties:/etc/trino/config.properties:ro
+    mem_limit: 3g
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/v1/info"]
       interval: 10s
@@ -293,6 +296,8 @@ services:
     volumes: &superset_volumes
       - ./superset/superset_config.py:/app/docker/superset_config.py:ro
       - ./superset/superset-init.sh:/app/docker/superset-init.sh:ro
+      # Định nghĩa dashboard dạng code (provision.py, metrics.json, datasets/*.sql) và nơi xuất ZIP.
+      - ./superset:/app/project
     depends_on:
       superset-db:
         condition: service_healthy

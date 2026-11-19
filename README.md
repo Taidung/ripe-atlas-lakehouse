@@ -32,7 +32,7 @@ cp .env.example .env   # rồi thay mọi giá trị change-me
 | Lệnh | Service | RAM đo được |
 |---|---|---|
 | `docker compose up -d` | core: SeaweedFS, Nessie + Postgres, Spark | ≈ 1,4 GB |
-| `docker compose --profile analytics up -d` | core + Trino + Superset | ≈ 2,9 GB |
+| `docker compose --profile analytics up -d` | core + Trino + Superset | ≈ 2,9–3,5 GB (Trino giới hạn 3 GB) |
 | `docker compose --profile all up -d` | toàn bộ service đã khai báo | — |
 
 Profile `jobs` chứa container ingestion, dùng qua `docker compose --profile jobs run --rm ingestion ...`. Các profile `orchestration`, `governance` và `monitoring` sẽ được thêm ở các giai đoạn sau.
@@ -140,6 +140,38 @@ Integration test chặn công bố, chạy trên nhánh Nessie tạm, không là
 bash scripts/test_dq_block_on_branch.sh 2026-11-19
 ```
 
+### Silver → Gold
+
+```bash
+# Tính lại mọi Gold mart cho các ngày chỉ định (chỉ đọc partition Silver đã công bố)
+docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/gold_build.py --dates 2026-11-19
+
+# Kiểm chứng độc lập Gold so với Silver, và sai số percentile so với giá trị chính xác
+docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/crosscheck_gold.py --date 2026-11-19
+```
+
+Định nghĩa metric và các mart: `docs/metric-dictionary.md`.
+
+### Dashboard Superset
+
+```bash
+docker compose --profile analytics up -d
+# Tạo hoặc cập nhật dataset, chart, dashboard từ code; chạy thử truy vấn của mọi chart; xuất ZIP vào superset/export/
+docker compose exec -T superset /app/.venv/bin/python /app/project/provision.py
+# Kiểm tra tổ hợp filter, rollup giờ → ngày, timezone qua chính API của Superset
+docker compose exec -T -w /app/project superset /app/.venv/bin/python verify_filters.py
+```
+
+Mở http://localhost:8088/superset/dashboard/global-network-quality/.
+
+Đặc tả từng chart, filter và giới hạn: `docs/dashboard-spec.md`.
+
+Import vào một Superset khác (Dashboards → Import, hoặc dùng CLI):
+
+```bash
+docker compose exec -T superset superset import-dashboards -p /app/project/export/global_network_quality.zip -u admin
+```
+
 ### Test
 
 ```bash
@@ -172,7 +204,9 @@ Thông số kết nối, dùng được với DBeaver, DataGrip hay Trino CLI:
 | Catalog | `nessie` |
 | User | tên bất kỳ (môi trường đồ án chưa bật xác thực Trino) |
 
-Trino dùng credentials S3 chỉ đọc nên **không ghi được** dữ liệu.
+Trino dùng credentials S3 chỉ đọc nên **không ghi được** dữ liệu. Mỗi truy vấn bị giới hạn 5 phút và 1 GB bộ nhớ (`trino/config.properties`).
+
+Truy vấn mẫu cho Gold và drill-down Silver: `docs/sql-examples.md`.
 
 ```bash
 docker compose exec trino trino --execute "SELECT measurement_id, count(*), count(DISTINCT probe_id) FROM nessie.bronze.ping_result_raw GROUP BY 1"
