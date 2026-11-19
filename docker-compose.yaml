@@ -11,6 +11,10 @@ services:
       AWS_REGION: us-east-1
     volumes:
       - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./spark/staging_to_bronze.py:/opt/spark/jobs/staging_to_bronze.py:ro
+      - ./spark/bronze_to_silver.py:/opt/spark/jobs/bronze_to_silver.py:ro
+      - ./tests/test_bronze.py:/opt/spark/tests/test_bronze.py:ro
+      - ./tests/test_silver.py:/opt/spark/tests/test_silver.py:ro
     networks:
       - lakehouse
     depends_on:
