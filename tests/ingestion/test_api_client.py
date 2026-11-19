@@ -78,12 +78,14 @@ def test_other_4xx_fails_immediately():
 
 
 def test_network_errors_and_broken_stream_are_retried_then_exhausted():
-    http, sleeps = client([
-        requests.ConnectionError("refused"),
-        FakeResponse(body=b"abcdef", fail_midway=True),
-        requests.Timeout("read timeout"),
-        FakeResponse(503),
-    ])
+    http, sleeps = client(
+        [
+            requests.ConnectionError("refused"),
+            FakeResponse(body=b"abcdef", fail_midway=True),
+            requests.Timeout("read timeout"),
+            FakeResponse(503),
+        ]
+    )
     with pytest.raises(AtlasHttpError) as err:
         http.get_bytes("x/", {})
     assert err.value.retryable and len(sleeps) == 3

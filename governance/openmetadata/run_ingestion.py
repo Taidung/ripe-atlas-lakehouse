@@ -38,8 +38,9 @@ class Om:
             except requests.RequestException:
                 pass
             time.sleep(5)
-        r = requests.post(f"{API}/users/login", json={"email": "admin@open-metadata.org",
-                                                      "password": base64.b64encode(b"admin").decode()}, timeout=30)
+        r = requests.post(
+            f"{API}/users/login", json={"email": "admin@open-metadata.org", "password": base64.b64encode(b"admin").decode()}, timeout=30
+        )
         r.raise_for_status()
         self.s = requests.Session()
         self.s.headers["Authorization"] = f"Bearer {r.json()['accessToken']}"
@@ -69,9 +70,14 @@ class Om:
 
 
 def workflow_config(source: dict, jwt: str) -> dict:
-    return {"source": source, "sink": {"type": "metadata-rest", "config": {}},
-            "workflowConfig": {"loggerLevel": "INFO", "openMetadataServerConfig": {
-                "hostPort": f"{HOST}/api", "authProvider": "openmetadata", "securityConfig": {"jwtToken": jwt}}}}
+    return {
+        "source": source,
+        "sink": {"type": "metadata-rest", "config": {}},
+        "workflowConfig": {
+            "loggerLevel": "INFO",
+            "openMetadataServerConfig": {"hostPort": f"{HOST}/api", "authProvider": "openmetadata", "securityConfig": {"jwtToken": jwt}},
+        },
+    }
 
 
 def run_workflow(config: dict) -> None:
@@ -85,19 +91,33 @@ def run_workflow(config: dict) -> None:
 
 
 def trino_source() -> dict:
-    return {"type": "trino", "serviceName": TRINO,
-            "serviceConnection": {"config": {"type": "Trino", "hostPort": "trino:8080", "username": "openmetadata", "catalog": DB}},
-            "sourceConfig": {"config": {"type": "DatabaseMetadata",
-                                        "schemaFilterPattern": {"includes": ["^bronze$", "^silver$", "^gold$", "^ops$"]},
-                                        "tableFilterPattern": {"excludes": ["^legacy_.*", "^ping_results$", "^measurements$", "^probes$"]}}}}
+    return {
+        "type": "trino",
+        "serviceName": TRINO,
+        "serviceConnection": {"config": {"type": "Trino", "hostPort": "trino:8080", "username": "openmetadata", "catalog": DB}},
+        "sourceConfig": {
+            "config": {
+                "type": "DatabaseMetadata",
+                "schemaFilterPattern": {"includes": ["^bronze$", "^silver$", "^gold$", "^ops$"]},
+                "tableFilterPattern": {"excludes": ["^legacy_.*", "^ping_results$", "^measurements$", "^probes$"]},
+            }
+        },
+    }
 
 
 def superset_source() -> dict:
-    return {"type": "superset", "serviceName": "superset_dashboards",
-            "serviceConnection": {"config": {"type": "Superset", "hostPort": "http://superset:8088",
-                                             "connection": {"provider": "db", "username": "admin",
-                                                            "password": os.environ["SUPERSET_ADMIN_PASSWORD"]}}},
-            "sourceConfig": {"config": {"type": "DashboardMetadata", "lineageInformation": {"dbServicePrefixes": [TRINO]}}}}
+    return {
+        "type": "superset",
+        "serviceName": "superset_dashboards",
+        "serviceConnection": {
+            "config": {
+                "type": "Superset",
+                "hostPort": "http://superset:8088",
+                "connection": {"provider": "db", "username": "admin", "password": os.environ["SUPERSET_ADMIN_PASSWORD"]},
+            }
+        },
+        "sourceConfig": {"config": {"type": "DashboardMetadata", "lineageInformation": {"dbServicePrefixes": [TRINO]}}},
+    }
 
 
 def table_fqn(name: str) -> str:
@@ -115,10 +135,17 @@ def enrich(om: Om) -> dict:
         if not t:
             stats["missing"].append(name)
             continue
-        ops = [{"op": "add", "path": "/description", "value": spec["description"]},
-               {"op": "add", "path": "/owners", "value": [{"id": team["id"], "type": "team"}]},
-               {"op": "add", "path": "/tags", "value": [{"tagFQN": f"DataLayer.{spec['layer']}", "source": "Classification",
-                                                         "labelType": "Manual", "state": "Confirmed"}]}]
+        ops = [
+            {"op": "add", "path": "/description", "value": spec["description"]},
+            {"op": "add", "path": "/owners", "value": [{"id": team["id"], "type": "team"}]},
+            {
+                "op": "add",
+                "path": "/tags",
+                "value": [
+                    {"tagFQN": f"DataLayer.{spec['layer']}", "source": "Classification", "labelType": "Manual", "state": "Confirmed"}
+                ],
+            },
+        ]
         index = {c["name"]: i for i, c in enumerate(t["columns"])}
         for col, desc in (spec.get("columns") or {}).items():
             if col in index:
@@ -126,28 +153,49 @@ def enrich(om: Om) -> dict:
                 stats["columns"] += 1
         om.patch(f"/tables/{t['id']}", ops)
         stats["tables"] += 1
-    glossary = om.put("/glossaries", {"name": "RIPE_Atlas_Metrics", "displayName": "RIPE Atlas Metrics",
-                                      "description": "Định nghĩa metric dùng trong Gold và Superset (docs/metric-dictionary.md)."})
+    glossary = om.put(
+        "/glossaries",
+        {
+            "name": "RIPE_Atlas_Metrics",
+            "displayName": "RIPE Atlas Metrics",
+            "description": "Định nghĩa metric dùng trong Gold và Superset (docs/metric-dictionary.md).",
+        },
+    )
     terms = 0
     for group, metrics in METRICS.items():
         if group.startswith("_"):
             continue
         for name, m in metrics.items():
-            om.put("/glossaryTerms", {"glossary": glossary["fullyQualifiedName"], "name": name, "displayName": m["label"],
-                                      "description": f"{m['label']}.\n\nBiểu thức (Trino/Superset): `{m['expression']}`\n\nNhóm: {group}"})
+            om.put(
+                "/glossaryTerms",
+                {
+                    "glossary": glossary["fullyQualifiedName"],
+                    "name": name,
+                    "displayName": m["label"],
+                    "description": f"{m['label']}.\n\nBiểu thức (Trino/Superset): `{m['expression']}`\n\nNhóm: {group}",
+                },
+            )
             terms += 1
     stats["glossary_terms"] = terms
     return stats
 
 
 def ensure_containers(om: Om) -> dict[str, str]:
-    svc = om.put("/services/storageServices", {
-        "name": CATALOG["storage_service"], "serviceType": "S3", "description": "SeaweedFS (S3 API), bucket staging",
-        "connection": {"config": {"type": "S3", "awsConfig": {"awsRegion": "us-east-1", "endPointURL": "http://s3:8333"}}}})
+    svc = om.put(
+        "/services/storageServices",
+        {
+            "name": CATALOG["storage_service"],
+            "serviceType": "S3",
+            "description": "SeaweedFS (S3 API), bucket staging",
+            "connection": {"config": {"type": "S3", "awsConfig": {"awsRegion": "us-east-1", "endPointURL": "http://s3:8333"}}},
+        },
+    )
     ids = {}
     for name, path in CATALOG["containers"].items():
-        c = om.put("/containers", {"name": name, "service": svc["fullyQualifiedName"], "description": f"Staging: {path}",
-                                   "fullPath": path.split(" ")[0]})
+        c = om.put(
+            "/containers",
+            {"name": name, "service": svc["fullyQualifiedName"], "description": f"Staging: {path}", "fullPath": path.split(" ")[0]},
+        )
         ids[name] = c["id"]
     return ids
 
@@ -165,8 +213,10 @@ def add_lineage(om: Om, containers: dict[str, str]) -> int:
     for edge in CATALOG["lineage"]:
         details = {"description": f"Khai báo từ code: {edge['via']} (provenance: declared-from-code)", "source": "Manual"}
         if edge.get("columns"):
-            details["columnsLineage"] = [{"fromColumns": [f"{table_fqn(edge['from'])}.{c}" for c in cl["from"]],
-                                          "toColumn": f"{table_fqn(edge['to'])}.{cl['to']}"} for cl in edge["columns"]]
+            details["columnsLineage"] = [
+                {"fromColumns": [f"{table_fqn(edge['from'])}.{c}" for c in cl["from"]], "toColumn": f"{table_fqn(edge['to'])}.{cl['to']}"}
+                for cl in edge["columns"]
+            ]
         om.put("/lineage", {"edge": {"fromEntity": ref(edge["from"]), "toEntity": ref(edge["to"]), "lineageDetails": details}})
         n += 1
     return n
@@ -177,15 +227,24 @@ def verify(om: Om) -> dict:
     nodes = {n.get("fullyQualifiedName") for n in lin.get("nodes", [])}
     up = len(lin.get("upstreamEdges", []))
     down = len(lin.get("downstreamEdges", []))
-    col_edges = sum(len(e.get("lineageDetails", {}).get("columnsLineage") or []) for e in lin.get("upstreamEdges", []) + lin.get("downstreamEdges", []))
+    col_edges = sum(
+        len(e.get("lineageDetails", {}).get("columnsLineage") or []) for e in lin.get("upstreamEdges", []) + lin.get("downstreamEdges", [])
+    )
     dashboards = (om.get("/dashboards", service="superset_dashboards", limit=50) or {}).get("data", [])
     charts = (om.get("/charts", service="superset_dashboards", limit=100) or {}).get("paging", {}).get("total")
     gold_lin = om.get(f"/lineage/table/name/{table_fqn('gold.quality_hourly_probe')}", upstreamDepth=1, downstreamDepth=3) or {}
     to_dash = [n for n in gold_lin.get("nodes", []) if n.get("type") in ("dashboard", "dashboardDataModel", "chart")]
     tables = (om.get("/tables", database=f"{TRINO}.{DB}", limit=200) or {}).get("paging", {}).get("total")
-    return {"tables_in_om": tables, "fact_lineage_nodes": len(nodes), "fact_upstream_edges": up, "fact_downstream_edges": down,
-            "column_lineage_pairs_around_fact": col_edges, "dashboards": [d["displayName"] for d in dashboards], "charts": charts,
-            "gold_probe_downstream_superset_nodes": len(to_dash)}
+    return {
+        "tables_in_om": tables,
+        "fact_lineage_nodes": len(nodes),
+        "fact_upstream_edges": up,
+        "fact_downstream_edges": down,
+        "column_lineage_pairs_around_fact": col_edges,
+        "dashboards": [d["displayName"] for d in dashboards],
+        "charts": charts,
+        "gold_probe_downstream_superset_nodes": len(to_dash),
+    }
 
 
 def main() -> int:

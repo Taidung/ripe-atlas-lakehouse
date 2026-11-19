@@ -8,10 +8,10 @@ from ingestion.probe_sets import load_probe_set, stratified_select
 
 def population():
     probes = []
-    probes += [{"id": i, "country_code": "AA", "asn_v4": 1} for i in range(1, 6)]   # tầng 5 probe
-    probes += [{"id": 10, "country_code": "AA", "asn_v4": 2}]                      # tầng 1 probe
+    probes += [{"id": i, "country_code": "AA", "asn_v4": 1} for i in range(1, 6)]  # tầng 5 probe
+    probes += [{"id": 10, "country_code": "AA", "asn_v4": 2}]  # tầng 1 probe
     probes += [{"id": i, "country_code": "BB", "asn_v4": 3} for i in range(20, 23)]
-    probes += [{"id": 30, "country_code": None, "asn_v4": None}]                   # tầng UNKNOWN
+    probes += [{"id": 30, "country_code": None, "asn_v4": None}]  # tầng UNKNOWN
     return probes
 
 

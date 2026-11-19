@@ -23,8 +23,16 @@ from airflow.sdk import BaseOperator
 NETWORK = os.environ.get("LAKEHOUSE_NETWORK", "ripe-atlas-lakehouse_lakehouse")
 SPARK_CONTAINER = os.environ.get("SPARK_CONTAINER", "ripe-atlas-lakehouse-spark-iceberg-1")
 INGEST_IMAGE = os.environ.get("INGEST_IMAGE", "ripe-atlas-ingestion:0.2")
-INGEST_ENV = ["S3_INGEST_ACCESS_KEY", "S3_INGEST_SECRET_KEY", "STAGING_S3_ENDPOINT", "STAGING_BUCKET", "PROBE_SET_VERSION",
-              "OVERLAP_HOURS", "ATLAS_CONCURRENCY", "PUSHGATEWAY_URL"]
+INGEST_ENV = [
+    "S3_INGEST_ACCESS_KEY",
+    "S3_INGEST_SECRET_KEY",
+    "STAGING_S3_ENDPOINT",
+    "STAGING_BUCKET",
+    "PROBE_SET_VERSION",
+    "OVERLAP_HOURS",
+    "ATLAS_CONCURRENCY",
+    "PUSHGATEWAY_URL",
+]
 
 
 def overlap_hours() -> int:
@@ -62,8 +70,9 @@ class IngestionOperator(BaseOperator):
         env = {k: os.environ[k] for k in INGEST_ENV if os.environ.get(k)}
         self.log.info("ingestion %s (image %s, network %s)", shlex.join(args), INGEST_IMAGE, NETWORK)
         client = _docker()
-        self._container = client.containers.run(INGEST_IMAGE, command=args, environment=env, network=NETWORK, detach=True,
-                                                labels={"ripe.airflow.task": self.task_id})
+        self._container = client.containers.run(
+            INGEST_IMAGE, command=args, environment=env, network=NETWORK, detach=True, labels={"ripe.airflow.task": self.task_id}
+        )
         try:
             for line in self._container.logs(stream=True, follow=True):
                 self.log.info(line.decode("utf-8", errors="replace").rstrip())

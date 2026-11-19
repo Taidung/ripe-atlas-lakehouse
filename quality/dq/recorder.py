@@ -23,9 +23,26 @@ class DqRecorder:
 
     def write(self, layer: str, table: str, scope: str, checks: list[CheckResult], snapshot_id: int | None) -> None:
         now = datetime.now(timezone.utc)
-        rows = [(self.dq_run_id, self.pipeline_run_id, layer, table, scope, c["check_name"], c["engine"], c["severity"],
-                 c["success"], c["observed_value"], c["unexpected_count"], c["element_count"], c["details"], snapshot_id, now)
-                for c in checks]
+        rows = [
+            (
+                self.dq_run_id,
+                self.pipeline_run_id,
+                layer,
+                table,
+                scope,
+                c["check_name"],
+                c["engine"],
+                c["severity"],
+                c["success"],
+                c["observed_value"],
+                c["unexpected_count"],
+                c["element_count"],
+                c["details"],
+                snapshot_id,
+                now,
+            )
+            for c in checks
+        ]
         self.spark.createDataFrame(rows, self.spark.table(DQ_TABLE).schema).writeTo(DQ_TABLE).append()
         for c in checks:
             if not c["success"]:

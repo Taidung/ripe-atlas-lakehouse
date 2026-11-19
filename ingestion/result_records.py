@@ -126,7 +126,16 @@ def classify(records: list[dict[str, Any]], prior: PriorIndex) -> tuple[list[dic
         record["change_type"] = "changed" if key in prior.by_key else "new"
         counts[record["change_type"]] += 1
         staged.append(record)
-    for status in ("ok", "malformed_json", "not_object", "missing_key", "wrong_measurement", "af_mismatch", "out_of_window", "invalid_utf8"):
+    for status in (
+        "ok",
+        "malformed_json",
+        "not_object",
+        "missing_key",
+        "wrong_measurement",
+        "af_mismatch",
+        "out_of_window",
+        "invalid_utf8",
+    ):
         counts[f"status_{status}"] = sum(1 for r in records if r["parse_status"] == status)
     counts["staged"] = len(staged)
     return staged, counts

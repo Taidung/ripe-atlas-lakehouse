@@ -21,11 +21,11 @@ docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/<
 
 | Module | Vai trò |
 |---|---|
-| `common.py` | `SQL_DIR`, chạy file DDL, log JSON, run id, parse ngày và giờ |
+| `common.py` | Hằng số dùng chung (`REPORT_TZ`, `MEASUREMENTS`, `SQL_DIR`), chạy file DDL, log JSON, run id, parse ngày và giờ, đếm theo khóa |
 | `bronze.py` | Schema staging, tách bản ghi hợp lệ / quarantine, kiểm tra toàn vẹn batch |
 | `silver.py` | SCD2 (`build_scd2`), fact result và reply, as-of join, `dim_date` / `dim_time` |
 | `gold.py` | Mart chất lượng theo target / country / ASN / probe, histogram, ghép cặp IPv4/IPv6, coverage |
-| `publication.py` | Giao thức công bố: `ops.partition_status` + snapshot đã pin |
+| `publication.py` | Giao thức công bố: `PartitionStatus` → `ops.partition_status`, đọc Silver theo snapshot đã pin |
 | `metrics.py` | Đẩy metric job lên Pushgateway |
 
 ## DDL (`sql/`)
@@ -35,6 +35,5 @@ docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/<
 ## Khác
 
 - `spark-defaults.conf`: catalog Nessie, S3A, bộ nhớ driver (Compose và CI mount vào `/opt/spark/conf/`).
-- `legacy/`: job thế hệ đầu, chỉ giữ để tham khảo (xem `legacy/README.md`).
 
 Đặc tả: `docs/silver-model.md`, `docs/metric-dictionary.md`. Test: `tests/transformation/`.

@@ -15,8 +15,21 @@ def silver_fact_result(expected_rows: tuple[int, int] | None = None):
     """silver.fact_ping_result: khóa, miền giá trị, quan hệ packet/RTT; tỷ lệ unknown/public/độ trễ là warn."""
     import great_expectations.expectations as gxe
 
-    required = ("result_id", "measurement_id", "af", "probe_id", "event_ts", "event_time", "ictrl_dt",
-                "date_key", "time_key", "probe_sk", "measurement_sk", "result_status", "record_uid")
+    required = (
+        "result_id",
+        "measurement_id",
+        "af",
+        "probe_id",
+        "event_ts",
+        "event_time",
+        "ictrl_dt",
+        "date_key",
+        "time_key",
+        "probe_sk",
+        "measurement_sk",
+        "result_status",
+        "record_uid",
+    )
     exps = [(gxe.ExpectColumnValuesToNotBeNull(column=c), CRITICAL) for c in required]
     exps += [
         # Khóa
@@ -26,16 +39,26 @@ def silver_fact_result(expected_rows: tuple[int, int] | None = None):
         (gxe.ExpectColumnValuesToBeInSet(column="measurement_id", value_set=MEASUREMENT_IDS), CRITICAL),
         (gxe.ExpectColumnValuesToBeInSet(column="af", value_set=[4, 6]), CRITICAL),
         (gxe.ExpectColumnPairValuesToBeInSet(column_A="measurement_id", column_B="af", value_pairs_set=MEASUREMENT_AF), CRITICAL),
-        (gxe.ExpectColumnValuesToBeInSet(column="result_status",
-                                         value_set=["all_received", "partial_loss", "all_lost", "send_error"]), CRITICAL),
+        (
+            gxe.ExpectColumnValuesToBeInSet(column="result_status", value_set=["all_received", "partial_loss", "all_lost", "send_error"]),
+            CRITICAL,
+        ),
         # Quan hệ packet / RTT
         (gxe.ExpectColumnValuesToBeBetween(column="packets_sent", min_value=0, max_value=64), CRITICAL),
-        (gxe.ExpectColumnPairValuesAToBeGreaterThanB(column_A="packets_sent", column_B="packets_received",
-                                                     or_equal=True, ignore_row_if="either_value_is_missing"), CRITICAL),
+        (
+            gxe.ExpectColumnPairValuesAToBeGreaterThanB(
+                column_A="packets_sent", column_B="packets_received", or_equal=True, ignore_row_if="either_value_is_missing"
+            ),
+            CRITICAL,
+        ),
         (gxe.ExpectColumnValuesToBeBetween(column="rtt_min_ms", min_value=0), CRITICAL),
         (gxe.ExpectColumnValuesToBeBetween(column="rtt_avg_ms", min_value=0), CRITICAL),
-        (gxe.ExpectColumnPairValuesAToBeGreaterThanB(column_A="rtt_max_ms", column_B="rtt_min_ms",
-                                                     or_equal=True, ignore_row_if="either_value_is_missing"), CRITICAL),
+        (
+            gxe.ExpectColumnPairValuesAToBeGreaterThanB(
+                column_A="rtt_max_ms", column_B="rtt_min_ms", or_equal=True, ignore_row_if="either_value_is_missing"
+            ),
+            CRITICAL,
+        ),
         (gxe.ExpectColumnValuesToBeBetween(column="valid_rtt_count", min_value=0, max_value=64), CRITICAL),
         # Cảnh báo (vẫn công bố)
         (gxe.ExpectColumnValuesToBeInSet(column="counts_consistent", value_set=[True], mostly=0.999), WARN),
@@ -84,8 +107,10 @@ def gold_quality_target():
     """gold.quality_hourly_target: khóa giờ × cohort × measurement và quan hệ giữa các tổng."""
     import great_expectations.expectations as gxe
 
-    exps = [(gxe.ExpectColumnValuesToNotBeNull(column=c), CRITICAL)
-            for c in ("ictrl_dt", "event_hour_utc", "event_hour_local", "probe_set_version", "measurement_id")]
+    exps = [
+        (gxe.ExpectColumnValuesToNotBeNull(column=c), CRITICAL)
+        for c in ("ictrl_dt", "event_hour_utc", "event_hour_local", "probe_set_version", "measurement_id")
+    ]
     exps += [
         (gxe.ExpectCompoundColumnsToBeUnique(column_list=["probe_set_version", "measurement_id", "event_hour_utc"]), CRITICAL),
         (gxe.ExpectColumnValuesToBeBetween(column="packets_lost", min_value=0), CRITICAL),

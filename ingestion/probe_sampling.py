@@ -12,9 +12,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from ingestion.api_client import AtlasHttp
+from ingestion.api_client import AtlasHttp, iter_probe_pages
 from ingestion.logs import log_event
-from ingestion.probe_sets import PROBE_SET_DIR, chunked, stratified_select
+from ingestion.probe_sets import PROBE_SET_DIR, stratified_select
 from ingestion.result_records import split_lines
 from ingestion.settings import MEASUREMENTS, HttpSettings
 
@@ -35,20 +35,8 @@ def active_probes(http: AtlasHttp, start: datetime, end: datetime) -> dict[int, 
 
 
 def probe_metadata(http: AtlasHttp, ids: set[int]) -> dict[int, dict[str, Any]]:
-    meta: dict[int, dict[str, Any]] = {}
-    for chunk in chunked(sorted(ids), 500):
-        page = 1
-        while True:
-            data, _, _ = http.get_json("probes/", {
-                "id__in": ",".join(map(str, chunk)), "page_size": 500, "page": page, "format": "json",
-                "fields": "id,country_code,asn_v4,asn_v6,is_public",
-            })
-            for probe in data["results"]:
-                meta[probe["id"]] = probe
-            if not data.get("next"):
-                break
-            page += 1
-    return meta
+    pages = iter_probe_pages(http, sorted(ids), fields="id,country_code,asn_v4,asn_v6,is_public")
+    return {probe["id"]: probe for _, data, _ in pages for probe in data["results"]}
 
 
 def build(version: str, k: int, cap: int, seed: str, reference_end: datetime, reference_minutes: int, http: AtlasHttp) -> dict[str, Any]:
@@ -75,9 +63,14 @@ def build(version: str, k: int, cap: int, seed: str, reference_end: datetime, re
     return {
         "version": version,
         "mode": "analysis",
-        "method": "stratified by (country_code, asn per af); k per stratum; per-country cap; deterministic sha256(seed:probe_id) order; dual-stack preferred",
+        "method": (
+            "stratified by (country_code, asn per af); k per stratum; per-country cap; "
+            "deterministic sha256(seed:probe_id) order; dual-stack preferred"
+        ),
         "params": {
-            "k": k, "country_cap": cap, "seed": seed,
+            "k": k,
+            "country_cap": cap,
+            "seed": seed,
             "reference_window": [reference_start.isoformat(), reference_end.isoformat()],
             "population_filter": "public_only=true results in reference window AND probes API is_public=true",
             "measurements": sorted(MEASUREMENTS),
@@ -95,8 +88,10 @@ def write(document: dict[str, Any], directory: Path = PROBE_SET_DIR) -> Path:
     path = directory / f"{document['version']}.json"
     if path.exists():
         raise FileExistsError(f"{path} exists; probe sets are immutable, create a new version instead")
-    path.write_text(json.dumps(document, separators=(",", ":"), ensure_ascii=False) + "\n", encoding="utf-8")
-    log_event("probe_set", "written", version=document["version"], path=str(path), v4=len(document["probes_v4"]), v6=len(document["probes_v6"]))
+    path.write_bytes((json.dumps(document, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8"))  # LF trên mọi OS
+    log_event(
+        "probe_set", "written", version=document["version"], path=str(path), v4=len(document["probes_v4"]), v6=len(document["probes_v6"])
+    )
     return path
 
 

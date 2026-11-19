@@ -52,6 +52,8 @@ def run_cleanup(store: StagingStore, min_age_hours: int, apply: bool, now: datet
         from ingestion.metrics import push_safely
 
         reg = CollectorRegistry()
-        Gauge("ripe_staging_orphan_objects", "Object staging mồ côi tìm thấy lần chạy gần nhất", ["applied"], registry=reg).labels(str(apply).lower()).set(len(orphans))
+        Gauge("ripe_staging_orphan_objects", "Object staging mồ côi tìm thấy lần chạy gần nhất", ["applied"], registry=reg).labels(
+            str(apply).lower()
+        ).set(len(orphans))
         push_safely(url, {"stage": "staging_cleanup"}, reg)
     return orphans

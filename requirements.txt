@@ -1,4 +1,0 @@
-dlt[filesystem]==1.32.0
-prometheus-client==0.26.0
-requests==2.34.2
-s3fs==2026.9.0

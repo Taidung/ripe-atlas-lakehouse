@@ -13,19 +13,26 @@ vẫn còn cho đến khi Nessie GC dọn.
 from __future__ import annotations
 
 import argparse
-from datetime import date, datetime
-from zoneinfo import ZoneInfo
+from datetime import date
 
 from pyspark.sql import SparkSession
 
-from lakehouse.common import log_event
+from lakehouse.common import log_event, report_today
 from lakehouse.metrics import job_metrics
 
 TABLES = [
-    "bronze.ping_result_raw", "bronze.probe_metadata_raw", "bronze.measurement_metadata_raw",
-    "silver.fact_ping_result", "silver.fact_ping_reply",
-    "gold.quality_hourly_target", "gold.quality_hourly_country", "gold.quality_hourly_asn", "gold.quality_hourly_probe",
-    "gold.rtt_histogram_hourly", "gold.ipv4_ipv6_paired_hourly", "gold.coverage_hourly",
+    "bronze.ping_result_raw",
+    "bronze.probe_metadata_raw",
+    "bronze.measurement_metadata_raw",
+    "silver.fact_ping_result",
+    "silver.fact_ping_reply",
+    "gold.quality_hourly_target",
+    "gold.quality_hourly_country",
+    "gold.quality_hourly_asn",
+    "gold.quality_hourly_probe",
+    "gold.rtt_histogram_hourly",
+    "gold.ipv4_ipv6_paired_hourly",
+    "gold.coverage_hourly",
 ]
 
 
@@ -34,7 +41,7 @@ def main() -> None:
     parser.add_argument("--before", type=date.fromisoformat, help="Chỉ gộp partition ictrl_dt < ngày này (mặc định: hôm nay giờ VN)")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    before = args.before or datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+    before = args.before or report_today()
 
     spark = SparkSession.builder.appName("maintenance").getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
@@ -52,8 +59,17 @@ def main() -> None:
                                       options => map('min-input-files', '2', 'target-file-size-bytes', '134217728'))""").first()
                     rewritten, added = r["rewritten_data_files_count"], r["added_data_files_count"]
                 files_after = spark.sql(f"SELECT count(*) FROM {full}.files WHERE partition.ictrl_dt < DATE '{before}'").first()[0]
-                log_event("maintenance", "compacted", table=table, before=str(before), files_before=files_before,
-                          files_after=files_after, rewritten=rewritten, added=added, dry_run=args.dry_run)
+                log_event(
+                    "maintenance",
+                    "compacted",
+                    table=table,
+                    before=str(before),
+                    files_before=files_before,
+                    files_after=files_after,
+                    rewritten=rewritten,
+                    added=added,
+                    dry_run=args.dry_run,
+                )
                 m.set("ripe_iceberg_closed_partition_files", "Số data file của các ngày đã đóng sau bảo trì", files_after, table=table)
                 m.set("ripe_iceberg_files_rewritten", "Số file được gộp lần chạy gần nhất", rewritten, table=table)
         finally:

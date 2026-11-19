@@ -26,10 +26,10 @@ docker compose --profile jobs run --rm ingestion incremental
 | `time_windows.py` | Cửa sổ `[start, end)` theo giờ, quy tắc biên của API results |
 | `probe_sets.py` | Đọc tập probe có phiên bản (`probe_set_version`) |
 | `probe_sampling.py` | Thuật toán lấy mẫu phân tầng k=2, cap=100 |
-| `api_client.py` | HTTP client: retry có giới hạn, backoff kèm jitter, tôn trọng `Retry-After` |
+| `api_client.py` | HTTP client: retry có giới hạn, backoff kèm jitter, tôn trọng `Retry-After`; `iter_probe_pages` đi hết các trang `probes/` |
 | `result_records.py` | Body API → record staging; phân loại delta (mới / trùng / đổi nội dung) |
 | `staging_store.py` | Ghi object qua dlt; ghi manifest (commit marker) và hash index |
-| `jobs.py` | Ghép tất cả lại: một job cho mỗi `(measurement_id, cửa sổ 1 giờ)` |
+| `jobs.py` | Ghép tất cả lại: một job cho mỗi `(measurement_id, cửa sổ 1 giờ)`; job snapshot metadata probe/measurement |
 | `staging_cleanup.py` | Dọn object mồ côi do lượt chạy bị ngắt giữa chừng |
 | `metrics.py`, `logs.py` | Metric đẩy lên Pushgateway; log JSON từng dòng ra stderr |
 

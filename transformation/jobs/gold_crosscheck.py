@@ -29,8 +29,13 @@ def main() -> int:
     spark.sparkContext.setLogLevel("ERROR")
     day = args.date
 
-    rows = [(ps["version"], af, pid) for p in sorted(Path("/opt/app/config/probe_sets").glob("*.json"))
-            for ps in [json.loads(p.read_text(encoding="utf-8"))] for af, k in ((4, "probes_v4"), (6, "probes_v6")) for pid in ps[k]]
+    rows = [
+        (ps["version"], af, pid)
+        for p in sorted(Path("/opt/app/config/probe_sets").glob("*.json"))
+        for ps in [json.loads(p.read_text(encoding="utf-8"))]
+        for af, k in ((4, "probes_v4"), (6, "probes_v6"))
+        for pid in ps[k]
+    ]
     spark.createDataFrame(rows, "v string, af int, probe_id long").createOrReplaceTempView("members")
 
     q = METRICS["quality"]
@@ -45,19 +50,31 @@ def main() -> int:
         WHERE f.ictrl_dt = DATE'{day}' AND f.public_status = 'public' AND NOT f.clock_suspect
         GROUP BY 1, 2""")
     from_gold = spark.sql(f"""
-        SELECT probe_set_version AS cohort, measurement_id, {q['packet_loss_pct']['expression']} AS loss,
-               {q['response_rate_observed_pct']['expression']} AS resp, {q['rtt_mean_ms']['expression']} AS rtt_mean,
+        SELECT probe_set_version AS cohort, measurement_id, {q["packet_loss_pct"]["expression"]} AS loss,
+               {q["response_rate_observed_pct"]["expression"]} AS resp, {q["rtt_mean_ms"]["expression"]} AS rtt_mean,
                SUM(results_total) AS n
         FROM nessie.gold.quality_hourly_target WHERE ictrl_dt = DATE'{day}' GROUP BY 1, 2""")
     ok = True
     print("cohort | msm | n silver/gold | loss% silver/gold | resp% silver/gold | rtt_mean silver/gold")
-    for r in sorted(direct.join(from_gold.withColumnRenamed("loss", "g_loss").withColumnRenamed("resp", "g_resp")
-                                .withColumnRenamed("rtt_mean", "g_rtt").withColumnRenamed("n", "g_n"),
-                                ["cohort", "measurement_id"], "full_outer").collect(), key=lambda r: (r.cohort, r.measurement_id)):
-        good = r.n == r.g_n and all(abs((a or 0) - (b or 0)) < 1e-9 for a, b in ((r.loss, r.g_loss), (r.resp, r.g_resp), (r.rtt_mean, r.g_rtt)))
+    for r in sorted(
+        direct.join(
+            from_gold.withColumnRenamed("loss", "g_loss")
+            .withColumnRenamed("resp", "g_resp")
+            .withColumnRenamed("rtt_mean", "g_rtt")
+            .withColumnRenamed("n", "g_n"),
+            ["cohort", "measurement_id"],
+            "full_outer",
+        ).collect(),
+        key=lambda r: (r.cohort, r.measurement_id),
+    ):
+        good = r.n == r.g_n and all(
+            abs((a or 0) - (b or 0)) < 1e-9 for a, b in ((r.loss, r.g_loss), (r.resp, r.g_resp), (r.rtt_mean, r.g_rtt))
+        )
         ok &= good
-        print(f"{r.cohort} | {r.measurement_id} | {r.n}/{r.g_n} | {r.loss:.4f}/{r.g_loss:.4f} | {r.resp:.4f}/{r.g_resp:.4f} | "
-              f"{r.rtt_mean:.4f}/{r.g_rtt:.4f} | {'OK' if good else 'MISMATCH'}")
+        print(
+            f"{r.cohort} | {r.measurement_id} | {r.n}/{r.g_n} | {r.loss:.4f}/{r.g_loss:.4f} | {r.resp:.4f}/{r.g_resp:.4f} | "
+            f"{r.rtt_mean:.4f}/{r.g_rtt:.4f} | {'OK' if good else 'MISMATCH'}"
+        )
 
     exact = spark.sql(f"""
         SELECT m.v AS cohort, f.measurement_id, percentile(r.rtt_ms, array(0.5, 0.95, 0.99)) AS e, COUNT(*) AS n
@@ -75,8 +92,10 @@ def main() -> int:
         errs = [abs(h / e - 1) if e else 0.0 for e, h in zip(r.e, r.h, strict=True)]
         worst = max(worst, *errs)
         ok &= r.n == r.hn
-        print(f"{r.cohort} | {r.measurement_id} | {r.n}/{r.hn} | " + " | ".join(
-            f"{e:.3f}/{h:.3f} ({err * 100:.2f}%)" for e, h, err in zip(r.e, r.h, errs, strict=True)))
+        print(
+            f"{r.cohort} | {r.measurement_id} | {r.n}/{r.hn} | "
+            + " | ".join(f"{e:.3f}/{h:.3f} ({err * 100:.2f}%)" for e, h, err in zip(r.e, r.h, errs, strict=True))
+        )
     print(f"\nmax relative percentile error = {worst * 100:.2f}% (threshold {args.max_rel_error_percentile * 100:.1f}%)")
     ok &= worst <= args.max_rel_error_percentile
     print("PASS" if ok else "FAIL")

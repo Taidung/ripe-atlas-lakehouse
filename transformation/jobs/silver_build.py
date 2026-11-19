@@ -39,7 +39,7 @@ from lakehouse.common import (
     table_columns,
 )
 from lakehouse.metrics import job_metrics
-from lakehouse.publication import latest_snapshot, set_partition_status
+from lakehouse.publication import PartitionStatus, latest_snapshot, set_partition_status
 from lakehouse.silver import (
     MEASUREMENT_TRACKED,
     PROBE_TRACKED,
@@ -64,13 +64,20 @@ REPLY = "nessie.silver.fact_ping_reply"
 def build_dimensions(spark: SparkSession, dq: DqRecorder) -> tuple[DataFrame, DataFrame]:
     probe = build_scd2(probe_snapshots(spark.table("nessie.bronze.probe_metadata_raw")), "probe_id", PROBE_TRACKED, "probe", "probe_sk")
     probe = with_unknown_member(spark, probe, "probe_id", "probe_sk").cache()
-    measurement = build_scd2(measurement_snapshots(spark.table("nessie.bronze.measurement_metadata_raw")),
-                             "measurement_id", MEASUREMENT_TRACKED, "measurement", "measurement_sk")
+    measurement = build_scd2(
+        measurement_snapshots(spark.table("nessie.bronze.measurement_metadata_raw")),
+        "measurement_id",
+        MEASUREMENT_TRACKED,
+        "measurement",
+        "measurement_sk",
+    )
     measurement = with_unknown_member(spark, measurement, "measurement_id", "measurement_sk").cache()
 
     blocked = []
-    for name, df, sk, key in (("dim_probe", probe, "probe_sk", "probe_id"),
-                              ("dim_measurement", measurement, "measurement_sk", "measurement_id")):
+    for name, df, sk, key in (
+        ("dim_probe", probe, "probe_sk", "probe_id"),
+        ("dim_measurement", measurement, "measurement_sk", "measurement_id"),
+    ):
         table = f"nessie.silver.{name}"
         checks = run_suite(df, f"silver_{name}", gx_suites.silver_dimension(sk, key), dq.pipeline_run_id) + scd2_checks(df, key, name)
         if has_critical_failure(checks):
@@ -115,8 +122,13 @@ def build_day(spark: SparkSession, day: date, probe_dim: DataFrame, msm_dim: Dat
         dq.write("silver", FACT, scope, checks_fact + checks_reconcile, None)
         dq.write("silver", REPLY, scope, checks_reply, None)
         failed = failed_names(all_checks, CRITICAL)
-        set_partition_status(spark, [("silver", t, day, m, "blocked", n, run_id, dq.dq_run_id, None,
-                                      "critical: " + "; ".join(failed)[:900], now) for t in (FACT, REPLY) for m, n in fact_counts.items()])
+        reason = "critical: " + "; ".join(failed)[:900]
+        rows = [
+            PartitionStatus("silver", t, day, m, "blocked", n, run_id, dq.dq_run_id, None, reason, now)
+            for t in (FACT, REPLY)
+            for m, n in fact_counts.items()
+        ]
+        set_partition_status(spark, rows)
         log_event("silver", "day_blocked", ictrl_dt=str(day), failed=failed)
         return "blocked"
 
@@ -125,8 +137,15 @@ def build_day(spark: SparkSession, day: date, probe_dim: DataFrame, msm_dim: Dat
     reply_out.writeTo(REPLY).overwritePartitions()
     fact_snapshot, reply_snapshot = latest_snapshot(spark, FACT), latest_snapshot(spark, REPLY)
     written = count_by_measurement(spark.table(FACT).filter(F.col("ictrl_dt") == F.lit(day)))
-    post_write = [make_check("post_write:row_count_matches", "spark", CRITICAL, written == fact_counts,
-                             observed={"written": written, "expected": fact_counts})]
+    post_write = [
+        make_check(
+            "post_write:row_count_matches",
+            "spark",
+            CRITICAL,
+            written == fact_counts,
+            observed={"written": written, "expected": fact_counts},
+        )
+    ]
     dq.write("silver", FACT, scope, checks_fact + checks_reconcile + post_write, fact_snapshot)
     dq.write("silver", REPLY, scope, checks_reply, reply_snapshot)
 
@@ -138,12 +157,22 @@ def build_day(spark: SparkSession, day: date, probe_dim: DataFrame, msm_dim: Dat
     else:
         status, reason = "published", None
     reply_counts = count_by_measurement(reply_out)
-    set_partition_status(spark,
-                         [("silver", FACT, day, m, status, n, run_id, dq.dq_run_id, fact_snapshot, reason, now) for m, n in fact_counts.items()]
-                         + [("silver", REPLY, day, m, status, n, run_id, dq.dq_run_id, reply_snapshot, reason, now)
-                            for m, n in reply_counts.items()])
-    log_event("silver", "day_written", ictrl_dt=str(day), status=status, rows=fact_counts, replies=reply_counts,
-              fact_snapshot=fact_snapshot, reply_snapshot=reply_snapshot)
+    rows = [
+        PartitionStatus("silver", table, day, m, status, n, run_id, dq.dq_run_id, snapshot, reason, now)
+        for table, counts, snapshot in ((FACT, fact_counts, fact_snapshot), (REPLY, reply_counts, reply_snapshot))
+        for m, n in counts.items()
+    ]
+    set_partition_status(spark, rows)
+    log_event(
+        "silver",
+        "day_written",
+        ictrl_dt=str(day),
+        status=status,
+        rows=fact_counts,
+        replies=reply_counts,
+        fact_snapshot=fact_snapshot,
+        reply_snapshot=reply_snapshot,
+    )
     for df in (bronze, facts, replies, fact_out):
         df.unpersist()
     return status
@@ -154,8 +183,16 @@ def days_needing_repair(spark: SparkSession, probe_dim: DataFrame) -> list[date]
     if not spark.catalog.tableExists(FACT):
         return []
     known = probe_dim.filter(~F.col("is_unknown_member")).select("probe_id").distinct()
-    rows = (spark.table(FACT).filter(F.col("probe_sk") == -1).select("ictrl_dt", "probe_id").distinct()
-            .join(known, "probe_id").select("ictrl_dt").distinct().collect())
+    rows = (
+        spark.table(FACT)
+        .filter(F.col("probe_sk") == -1)
+        .select("ictrl_dt", "probe_id")
+        .distinct()
+        .join(known, "probe_id")
+        .select("ictrl_dt")
+        .distinct()
+        .collect()
+    )
     return sorted(r["ictrl_dt"] for r in rows)
 
 
@@ -176,13 +213,28 @@ def parse_args() -> argparse.Namespace:
 
 def push_run_metrics(spark: SparkSession, m, results: dict[str, str], days: list[date]) -> None:
     for status in ("published", "published_with_warnings", "blocked", "empty"):
-        m.set("ripe_partition_days", "Số ngày theo trạng thái công bố, lần chạy gần nhất",
-              sum(1 for r in results.values() if r == status), layer="silver", status=status)
+        m.set(
+            "ripe_partition_days",
+            "Số ngày theo trạng thái công bố, lần chạy gần nhất",
+            sum(1 for r in results.values() if r == status),
+            layer="silver",
+            status=status,
+        )
     if days:
-        for r in (spark.table("nessie.ops.partition_status").filter(F.col("table_name") == FACT)
-                  .filter(F.col("ictrl_dt").isin(days)).groupBy("measurement_id").agg(F.sum("row_count").alias("n")).collect()):
-            m.set("ripe_silver_rows", "Số dòng fact_ping_result của các ngày vừa tính lại", r["n"] or 0,
-                  measurement_id=str(r["measurement_id"]))
+        for r in (
+            spark.table("nessie.ops.partition_status")
+            .filter(F.col("table_name") == FACT)
+            .filter(F.col("ictrl_dt").isin(days))
+            .groupBy("measurement_id")
+            .agg(F.sum("row_count").alias("n"))
+            .collect()
+        ):
+            m.set(
+                "ripe_silver_rows",
+                "Số dòng fact_ping_result của các ngày vừa tính lại",
+                r["n"] or 0,
+                measurement_id=str(r["measurement_id"]),
+            )
 
 
 def main() -> int:
@@ -213,8 +265,9 @@ def main() -> int:
                 return 0 if m.ok else 2
             finally:
                 for severity, n in dq.failed.items():
-                    m.set("ripe_dq_failed_checks", "Số kiểm tra chất lượng thất bại, lần chạy gần nhất", n,
-                          layer="silver", severity=severity)
+                    m.set(
+                        "ripe_dq_failed_checks", "Số kiểm tra chất lượng thất bại, lần chạy gần nhất", n, layer="silver", severity=severity
+                    )
         finally:
             spark.stop()
 

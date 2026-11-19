@@ -58,7 +58,7 @@ def load_probe_set(version: str, directory: Path = PROBE_SET_DIR) -> ProbeSet:
 
 def chunked(ids: Iterable[int], size: int) -> list[list[int]]:
     ids = list(ids)
-    return [ids[i:i + size] for i in range(0, len(ids), size)]
+    return [ids[i : i + size] for i in range(0, len(ids), size)]
 
 
 def _hash_rank(seed: str, probe_id: int) -> str:
@@ -95,14 +95,16 @@ def stratified_select(
     for (country, asn), members in strata.items():
         members.sort(key=lambda p: (p["id"] not in prefer, _hash_rank(seed, p["id"])))
         for rank, probe in enumerate(members[:k]):
-            candidates[country].append({
-                "probe_id": probe["id"],
-                "country_code": country,
-                "asn": asn,
-                "stratum_size": len(members),
-                "rank_in_stratum": rank,
-                "_order": (rank, probe["id"] not in prefer, _hash_rank(seed, probe["id"])),
-            })
+            candidates[country].append(
+                {
+                    "probe_id": probe["id"],
+                    "country_code": country,
+                    "asn": asn,
+                    "stratum_size": len(members),
+                    "rank_in_stratum": rank,
+                    "_order": (rank, probe["id"] not in prefer, _hash_rank(seed, probe["id"])),
+                }
+            )
 
     country_population = defaultdict(int)
     for (country, _), members in strata.items():

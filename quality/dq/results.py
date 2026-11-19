@@ -15,8 +15,16 @@ WARN = "warn"
 CheckResult = dict[str, Any]
 
 
-def make_check(name: str, engine: str, severity: str, success: bool, observed: Any = None,
-               unexpected: int | None = None, elements: int | None = None, details: Any = None) -> CheckResult:
+def make_check(
+    name: str,
+    engine: str,
+    severity: str,
+    success: bool,
+    observed: Any = None,
+    unexpected: int | None = None,
+    elements: int | None = None,
+    details: Any = None,
+) -> CheckResult:
     return {
         "check_name": name,
         "engine": engine,

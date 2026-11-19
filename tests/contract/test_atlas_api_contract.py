@@ -29,8 +29,16 @@ def test_results_contract_bounds_and_semantics():
 
     end = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
     start = end - timedelta(minutes=10)
-    body, _ = http.get_bytes("measurements/1001/results/", {"start": int(start.timestamp()), "stop": int(end.timestamp()) - 1,
-                                                             "probe_ids": "1000,26323,6001,6002,6003", "public_only": "true", "format": "txt"})
+    body, _ = http.get_bytes(
+        "measurements/1001/results/",
+        {
+            "start": int(start.timestamp()),
+            "stop": int(end.timestamp()) - 1,
+            "probe_ids": "1000,26323,6001,6002,6003",
+            "public_only": "true",
+            "format": "txt",
+        },
+    )
     records = [json.loads(line) for line in split_lines(body)]
     for r in records:
         assert {"msm_id", "prb_id", "timestamp", "af", "sent", "rcvd", "dup", "avg", "result", "type"} <= r.keys()

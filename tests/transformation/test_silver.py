@@ -13,10 +13,10 @@ pytestmark = pytest.mark.spark
 
 HISTORY = [
     (7, "2026-11-01 00:00:00", {"country_code": "VN", "asn_v4": 100}),
-    (7, "2026-11-02 00:00:00", {"country_code": "VN", "asn_v4": 100}),   # giống hệt -> không version mới
-    (7, "2026-11-03 00:00:00", {"country_code": "VN", "asn_v4": 200}),   # đổi ASN
-    (7, "2026-11-04 00:00:00", None),                                    # not_returned -> bỏ qua
-    (7, "2026-11-05 00:00:00", {"country_code": "VN", "asn_v4": 100}),   # quay lại giá trị cũ -> version 3
+    (7, "2026-11-02 00:00:00", {"country_code": "VN", "asn_v4": 100}),  # giống hệt -> không version mới
+    (7, "2026-11-03 00:00:00", {"country_code": "VN", "asn_v4": 200}),  # đổi ASN
+    (7, "2026-11-04 00:00:00", None),  # not_returned -> bỏ qua
+    (7, "2026-11-05 00:00:00", {"country_code": "VN", "asn_v4": 100}),  # quay lại giá trị cũ -> version 3
 ]
 
 
@@ -39,9 +39,23 @@ def test_scd2_surrogate_keys_stable_on_rebuild(spark):
 
 # ---------------------------------------------------------------------------- fact từ result thật
 def test_normalization_on_real_cases(spark, real_cases):
-    facts = {r.probe_id: r for r in facts_for(spark, [real_cases[k] for k in (
-        "normal_v4", "partial_loss_v4", "all_loss_timeout_v4", "send_error_sent0_v4", "duplicate_reply_v4", "dup_only_no_valid_v4",
-    )]).collect()}
+    facts = {
+        r.probe_id: r
+        for r in facts_for(
+            spark,
+            [
+                real_cases[k]
+                for k in (
+                    "normal_v4",
+                    "partial_loss_v4",
+                    "all_loss_timeout_v4",
+                    "send_error_sent0_v4",
+                    "duplicate_reply_v4",
+                    "dup_only_no_valid_v4",
+                )
+            ],
+        ).collect()
+    }
     normal = facts[real_cases["normal_v4"]["prb_id"]]
     assert (normal.result_status, normal.valid_rtt_count, normal.packets_lost) == ("all_received", 3, 0)
     assert normal.rtt_sum_ms == pytest.approx(sum(e["rtt"] for e in real_cases["normal_v4"]["result"]))
@@ -51,20 +65,31 @@ def test_normalization_on_real_cases(spark, real_cases):
     assert (partial.result_status, partial.valid_rtt_count, partial.timeout_count, partial.packets_lost) == ("partial_loss", 2, 1, 1)
 
     lost = facts[real_cases["all_loss_timeout_v4"]["prb_id"]]
-    assert (lost.result_status, lost.rtt_avg_ms, lost.src_rtt_avg, lost.rtt_sum_ms, lost.has_response) == ("all_lost", None, -1.0, None, False)
+    assert (lost.result_status, lost.rtt_avg_ms, lost.src_rtt_avg, lost.rtt_sum_ms, lost.has_response) == (
+        "all_lost",
+        None,
+        -1.0,
+        None,
+        False,
+    )
 
     err = facts[real_cases["send_error_sent0_v4"]["prb_id"]]
     assert (err.result_status, err.packets_lost, err.error_count) == ("send_error", None, 3)
 
     dup_only = facts[real_cases["dup_only_no_valid_v4"]["prb_id"]]
-    assert (dup_only.result_status, dup_only.duplicate_reply_count, dup_only.valid_rtt_count, dup_only.rtt_avg_ms) == ("all_lost", 1, 0, None)
+    assert (dup_only.result_status, dup_only.duplicate_reply_count, dup_only.valid_rtt_count, dup_only.rtt_avg_ms) == (
+        "all_lost",
+        1,
+        0,
+        None,
+    )
     assert all(r.counts_consistent for r in facts.values())
     assert all(r.clock_suspect is False for r in facts.values() if r.lts is not None and r.lts >= 0)
 
 
 def test_result_id_canonical_and_timezone_boundary(spark, unique_results):
     base = next(r for r in unique_results if r["msm_id"] == 1001)
-    before = dict(base, timestamp=1795021199)                             # 2026-11-18 16:59:59 UTC = 23:59:59 giờ VN
+    before = dict(base, timestamp=1795021199)  # 2026-11-18 16:59:59 UTC = 23:59:59 giờ VN
     after = dict(base, timestamp=1795021200, prb_id=base["prb_id"] + 1)  # 17:00:00 UTC = 00:00 ngày 19 giờ VN
     rows = {r.event_ts: r for r in facts_for(spark, [before, after]).collect()}
     assert (rows[1795021199].ictrl_dt, rows[1795021199].date_key, rows[1795021199].time_key) == (date(2026, 11, 18), 20261118, 2359)
@@ -84,8 +109,10 @@ def test_source_correction_picks_latest_fetch(spark, unique_results):
 def test_asof_join_boundaries_unknown_and_no_duplication(spark, unique_results):
     base = next(r for r in unique_results if r["msm_id"] == 1001)
     pid = base["prb_id"]
-    history = [(pid, "2026-11-18 13:00:00", {"country_code": "VN", "asn_v4": 100}),
-               (pid, "2026-11-18 13:30:00", {"country_code": "VN", "asn_v4": 200})]
+    history = [
+        (pid, "2026-11-18 13:00:00", {"country_code": "VN", "asn_v4": 100}),
+        (pid, "2026-11-18 13:30:00", {"country_code": "VN", "asn_v4": 200}),
+    ]
     events = [dict(base, timestamp=t) for t in (1795006799, 1795006800, 1795008599, 1795008600)]  # 12:59:59, 13:00, 13:29:59, 13:30
     stranger = dict(base, prb_id=99999999)
     facts = facts_for(spark, events + [stranger], probe_rows=history)

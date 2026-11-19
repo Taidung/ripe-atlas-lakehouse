@@ -15,15 +15,14 @@ import os
 import threading
 import time
 from collections import Counter
-from typing import Any
 
 from ingestion.logs import log_event
 
 _LOCK = threading.Lock()
-HTTP_REQUESTS: Counter = Counter()      # (endpoint, status_class) -> số request (tính theo request cuối cùng)
-HTTP_RETRIES: Counter = Counter()       # (endpoint, reason) -> số lần retry
-HTTP_DURATION: Counter = Counter()      # endpoint -> tổng giây
-HTTP_BYTES: Counter = Counter()         # endpoint -> tổng bytes
+HTTP_REQUESTS: Counter = Counter()  # (endpoint, status_class) -> số request (tính theo request cuối cùng)
+HTTP_RETRIES: Counter = Counter()  # (endpoint, reason) -> số lần retry
+HTTP_DURATION: Counter = Counter()  # endpoint -> tổng giây
+HTTP_BYTES: Counter = Counter()  # endpoint -> tổng bytes
 
 
 def endpoint_of(path: str) -> str:
@@ -60,8 +59,9 @@ def reset() -> None:
             c.clear()
 
 
-def push_ingest_metrics(run_type: str, started: float, ok: bool, window_counts: dict[int, Counter],
-                        window_status: Counter, url: str | None = None) -> None:
+def push_ingest_metrics(
+    run_type: str, started: float, ok: bool, window_counts: dict[int, Counter], window_status: Counter, url: str | None = None
+) -> None:
     url = url or os.environ.get("PUSHGATEWAY_URL")
     if not url:
         return
@@ -70,23 +70,48 @@ def push_ingest_metrics(run_type: str, started: float, ok: bool, window_counts: 
     reg = CollectorRegistry()
     labels = ["stage", "run_type"]
     now = time.time()
-    Gauge("ripe_job_duration_seconds", "Thời gian chạy của lần chạy gần nhất", labels, registry=reg).labels("ingest", run_type).set(now - started)
-    Gauge("ripe_job_last_run_success", "1 nếu lần chạy gần nhất thành công", labels, registry=reg).labels("ingest", run_type).set(1 if ok else 0)
-    windows = Gauge("ripe_ingest_windows", "Số job (measurement, cửa sổ) theo trạng thái, lần chạy gần nhất", ["run_type", "status"], registry=reg)
+    Gauge("ripe_job_duration_seconds", "Thời gian chạy của lần chạy gần nhất", labels, registry=reg).labels("ingest", run_type).set(
+        now - started
+    )
+    Gauge("ripe_job_last_run_success", "1 nếu lần chạy gần nhất thành công", labels, registry=reg).labels("ingest", run_type).set(
+        1 if ok else 0
+    )
+    windows = Gauge(
+        "ripe_ingest_windows", "Số job (measurement, cửa sổ) theo trạng thái, lần chạy gần nhất", ["run_type", "status"], registry=reg
+    )
     for status, n in window_status.items():
         windows.labels(run_type, status).set(n)
     records = Gauge("ripe_ingest_records", "Số result theo loại, lần chạy gần nhất", ["run_type", "measurement_id", "kind"], registry=reg)
     for msm, counts in window_counts.items():
-        for kind in ("fetched", "staged", "new", "changed", "unchanged", "duplicate_in_batch", "status_malformed_json", "status_missing_key"):
+        for kind in (
+            "fetched",
+            "staged",
+            "new",
+            "changed",
+            "unchanged",
+            "duplicate_in_batch",
+            "status_malformed_json",
+            "status_missing_key",
+        ):
             records.labels(run_type, str(msm), kind).set(counts.get(kind, 0))
     with _LOCK:
-        req = Gauge("ripe_api_requests", "Request tới RIPE Atlas API theo kết quả cuối, lần chạy gần nhất", ["run_type", "endpoint", "status_class"], registry=reg)
+        req = Gauge(
+            "ripe_api_requests",
+            "Request tới RIPE Atlas API theo kết quả cuối, lần chạy gần nhất",
+            ["run_type", "endpoint", "status_class"],
+            registry=reg,
+        )
         for (ep, sc), n in HTTP_REQUESTS.items():
             req.labels(run_type, ep, sc).set(n)
         ret = Gauge("ripe_api_retries", "Số lần retry theo lý do, lần chạy gần nhất", ["run_type", "endpoint", "reason"], registry=reg)
         for (ep, reason), n in HTTP_RETRIES.items():
             ret.labels(run_type, ep, reason).set(n)
-        dur = Gauge("ripe_api_request_duration_seconds_total", "Tổng thời gian request (kể cả retry), lần chạy gần nhất", ["run_type", "endpoint"], registry=reg)
+        dur = Gauge(
+            "ripe_api_request_duration_seconds_total",
+            "Tổng thời gian request (kể cả retry), lần chạy gần nhất",
+            ["run_type", "endpoint"],
+            registry=reg,
+        )
         cnt = Gauge("ripe_api_request_count_total", "Tổng số request, lần chạy gần nhất", ["run_type", "endpoint"], registry=reg)
         byt = Gauge("ripe_api_response_bytes_total", "Tổng bytes body, lần chạy gần nhất", ["run_type", "endpoint"], registry=reg)
         for ep, s in HTTP_DURATION.items():
@@ -112,12 +137,7 @@ def push_outcome(url: str, stage: str, run_type: str, ok: bool, when: float) -> 
 
     reg = CollectorRegistry()
     name = "ripe_job_last_success_timestamp_seconds" if ok else "ripe_job_last_failure_timestamp_seconds"
-    Gauge(name, "Unix time của lần chạy thành công/thất bại gần nhất", ["stage", "run_type"], registry=reg).labels(stage, run_type).set(when)
+    Gauge(name, "Unix time của lần chạy thành công/thất bại gần nhất", ["stage", "run_type"], registry=reg).labels(stage, run_type).set(
+        when
+    )
     push_safely(url, {"stage": stage, "run_type": run_type, "outcome": "success" if ok else "failure"}, reg)
-
-
-def summarize(counts: list[dict[str, Any]]) -> Counter:
-    total: Counter = Counter()
-    for c in counts:
-        total.update({k: v for k, v in c.items() if isinstance(v, int)})
-    return total

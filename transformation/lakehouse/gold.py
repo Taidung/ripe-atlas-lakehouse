@@ -15,7 +15,8 @@ from typing import Any
 from pyspark.sql import Column, DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
 
-REPORT_TZ = "Asia/Ho_Chi_Minh"
+from lakehouse.common import MEASUREMENTS, REPORT_TZ
+
 BUCKET_BASE_MS = 0.1
 BUCKET_RATIO = 1.02
 PAIR_MAX_DT_S = 120
@@ -34,8 +35,9 @@ def local_hour(col: str | Column) -> Column:
 
 
 def bucket_id(rtt: str | Column) -> Column:
-    return F.floor(F.log(F.greatest(F.col(rtt) if isinstance(rtt, str) else rtt, F.lit(BUCKET_BASE_MS)) / BUCKET_BASE_MS)
-                   / math.log(BUCKET_RATIO)).cast("int")
+    return F.floor(
+        F.log(F.greatest(F.col(rtt) if isinstance(rtt, str) else rtt, F.lit(BUCKET_BASE_MS)) / BUCKET_BASE_MS) / math.log(BUCKET_RATIO)
+    ).cast("int")
 
 
 def bucket_rep_ms(b: Column) -> Column:
@@ -55,10 +57,12 @@ def membership(spark: SparkSession, probe_sets: list[dict[str, Any]]) -> DataFra
 def cohort_results(facts: DataFrame, members: DataFrame) -> DataFrame:
     """Mọi result thuộc cohort (trước khi lọc public/clock); thêm cột giờ và mã unknown cho country/asn."""
     f = facts.drop("probe_set_version").join(F.broadcast(members), ["af", "probe_id"])
-    return (f.withColumn("event_hour_local", local_hour("event_hour_utc"))
-             .withColumn("country_code", F.coalesce("country_code", F.lit(UNKNOWN_COUNTRY)))
-             .withColumn("asn", F.coalesce("asn", F.lit(UNKNOWN_ASN)))
-             .withColumn("is_eligible", (F.col("public_status") == "public") & ~F.col("clock_suspect")))
+    return (
+        f.withColumn("event_hour_local", local_hour("event_hour_utc"))
+        .withColumn("country_code", F.coalesce("country_code", F.lit(UNKNOWN_COUNTRY)))
+        .withColumn("asn", F.coalesce("asn", F.lit(UNKNOWN_ASN)))
+        .withColumn("is_eligible", (F.col("public_status") == "public") & ~F.col("clock_suspect"))
+    )
 
 
 def measure_aggs() -> list[Column]:
@@ -92,88 +96,167 @@ def quality_target(eligible: DataFrame) -> DataFrame:
         *measure_aggs(),
         F.countDistinct("probe_id").alias("probes_observed"),
         F.countDistinct(F.when(F.col("country_code") != UNKNOWN_COUNTRY, F.col("country_code"))).alias("countries_observed"),
-        F.countDistinct(F.when(F.col("asn") != UNKNOWN_ASN, F.col("asn"))).alias("asns_observed"))
+        F.countDistinct(F.when(F.col("asn") != UNKNOWN_ASN, F.col("asn"))).alias("asns_observed"),
+    )
 
 
 def quality_country(eligible: DataFrame) -> DataFrame:
     return eligible.groupBy(*HOUR_KEYS, *MSM_KEYS, "country_code").agg(
-        *measure_aggs(), F.countDistinct("probe_id").alias("probes_observed"),
-        F.countDistinct(F.when(F.col("asn") != UNKNOWN_ASN, F.col("asn"))).alias("asns_observed"))
+        *measure_aggs(),
+        F.countDistinct("probe_id").alias("probes_observed"),
+        F.countDistinct(F.when(F.col("asn") != UNKNOWN_ASN, F.col("asn"))).alias("asns_observed"),
+    )
 
 
 def quality_asn(eligible: DataFrame) -> DataFrame:
     return eligible.groupBy(*HOUR_KEYS, *MSM_KEYS, "asn").agg(
-        *measure_aggs(), F.countDistinct("probe_id").alias("probes_observed"),
+        *measure_aggs(),
+        F.countDistinct("probe_id").alias("probes_observed"),
         F.countDistinct("country_code").alias("asn_country_count"),
-        F.min("country_code").alias("asn_primary_country"))
+        F.min("country_code").alias("asn_primary_country"),
+    )
 
 
 def quality_probe(eligible: DataFrame) -> DataFrame:
     return eligible.groupBy(*HOUR_KEYS, *MSM_KEYS, "probe_id").agg(
-        *measure_aggs(), F.max("probe_sk").alias("probe_sk"),
-        F.first("country_code").alias("country_code"), F.first("asn").alias("asn"))
+        *measure_aggs(), F.max("probe_sk").alias("probe_sk"), F.first("country_code").alias("country_code"), F.first("asn").alias("asn")
+    )
 
 
 def rtt_histogram(replies: DataFrame, eligible: DataFrame) -> DataFrame:
     keys = eligible.select("result_id", *HOUR_KEYS, *MSM_KEYS, "country_code", "asn")
     valid = replies.filter("is_valid_rtt").select("result_id", "rtt_ms").withColumn("bucket_id", bucket_id("rtt_ms"))
-    h = valid.join(keys, "result_id").groupBy(*HOUR_KEYS, *MSM_KEYS, "country_code", "asn", "bucket_id") \
+    h = (
+        valid.join(keys, "result_id")
+        .groupBy(*HOUR_KEYS, *MSM_KEYS, "country_code", "asn", "bucket_id")
         .agg(F.count("*").alias("reply_count"))
+    )
     b = F.col("bucket_id")
-    return (h.withColumn("bucket_rep_ms", bucket_rep_ms(b))
-             .withColumn("bucket_lower_ms", F.when(b == 0, F.lit(0.0)).otherwise(F.lit(BUCKET_BASE_MS) * F.pow(F.lit(BUCKET_RATIO), b)))
-             .withColumn("bucket_upper_ms", F.lit(BUCKET_BASE_MS) * F.pow(F.lit(BUCKET_RATIO), b + 1)))
+    return (
+        h.withColumn("bucket_rep_ms", bucket_rep_ms(b))
+        .withColumn("bucket_lower_ms", F.when(b == 0, F.lit(0.0)).otherwise(F.lit(BUCKET_BASE_MS) * F.pow(F.lit(BUCKET_RATIO), b)))
+        .withColumn("bucket_upper_ms", F.lit(BUCKET_BASE_MS) * F.pow(F.lit(BUCKET_RATIO), b + 1))
+    )
 
 
 # ---------------------------------------------------------------------------- IPv4 / IPv6 pairs
 def paired(eligible: DataFrame) -> DataFrame:
-    cols = ["probe_set_version", "target", "probe_id", "event_ts", "event_hour_utc", "event_hour_local", "ictrl_dt",
-            "packets_sent", "packets_lost", "rtt_sum_ms", "valid_rtt_count", "country_code", "asn", "result_id"]
-    v4 = eligible.filter("af = 4").select(*[F.col(c).alias(f"v4_{c}") if c not in ("probe_set_version", "target", "probe_id") else c for c in cols])
-    v6 = eligible.filter("af = 6").select(*[F.col(c).alias(f"v6_{c}") if c not in ("probe_set_version", "target", "probe_id") else c for c in cols])
-    cand = v4.join(v6, ["probe_set_version", "target", "probe_id"]).withColumn("dt", F.abs(F.col("v6_event_ts") - F.col("v4_event_ts"))) \
+    cols = [
+        "probe_set_version",
+        "target",
+        "probe_id",
+        "event_ts",
+        "event_hour_utc",
+        "event_hour_local",
+        "ictrl_dt",
+        "packets_sent",
+        "packets_lost",
+        "rtt_sum_ms",
+        "valid_rtt_count",
+        "country_code",
+        "asn",
+        "result_id",
+    ]
+    v4 = eligible.filter("af = 4").select(
+        *[F.col(c).alias(f"v4_{c}") if c not in ("probe_set_version", "target", "probe_id") else c for c in cols]
+    )
+    v6 = eligible.filter("af = 6").select(
+        *[F.col(c).alias(f"v6_{c}") if c not in ("probe_set_version", "target", "probe_id") else c for c in cols]
+    )
+    cand = (
+        v4.join(v6, ["probe_set_version", "target", "probe_id"])
+        .withColumn("dt", F.abs(F.col("v6_event_ts") - F.col("v4_event_ts")))
         .filter(F.col("dt") <= PAIR_MAX_DT_S)
+    )
     r4 = Window.partitionBy("v4_result_id").orderBy("dt", "v6_event_ts")
     r6 = Window.partitionBy("v6_result_id").orderBy("dt", "v4_event_ts")
     pairs = cand.withColumn("r4", F.row_number().over(r4)).withColumn("r6", F.row_number().over(r6)).filter("r4 = 1 AND r6 = 1")
 
     keys = ["probe_set_version", "target", "probe_id", "ictrl_dt", "event_hour_utc", "event_hour_local"]
     # Cặp được xếp vào giờ của result v4.
-    agg_pairs = (pairs.withColumn("ictrl_dt", F.col("v4_ictrl_dt"))
-                 .withColumn("event_hour_utc", F.col("v4_event_hour_utc"))
-                 .withColumn("event_hour_local", F.col("v4_event_hour_local"))
-                 ).groupBy(*keys).agg(
-        F.count("*").alias("pairs"), F.avg("dt").alias("pair_dt_mean_s"),
-        F.first("v4_country_code").alias("country_code"), F.first("v4_asn").alias("asn_v4"), F.first("v6_asn").alias("asn_v6"),
-        *[F.coalesce(F.sum(f"{s}_{m}"), F.lit(0)).cast("long" if m != "rtt_sum_ms" else "double").alias(f"{s}_{m}")
-          for s in ("v4", "v6") for m in ("packets_sent", "packets_lost", "valid_rtt_count")],
-        F.sum("v4_rtt_sum_ms").alias("v4_rtt_sum_ms"), F.sum("v6_rtt_sum_ms").alias("v6_rtt_sum_ms"))
+    agg_pairs = (
+        (
+            pairs.withColumn("ictrl_dt", F.col("v4_ictrl_dt"))
+            .withColumn("event_hour_utc", F.col("v4_event_hour_utc"))
+            .withColumn("event_hour_local", F.col("v4_event_hour_local"))
+        )
+        .groupBy(*keys)
+        .agg(
+            F.count("*").alias("pairs"),
+            F.avg("dt").alias("pair_dt_mean_s"),
+            F.first("v4_country_code").alias("country_code"),
+            F.first("v4_asn").alias("asn_v4"),
+            F.first("v6_asn").alias("asn_v6"),
+            *[
+                F.coalesce(F.sum(f"{s}_{m}"), F.lit(0)).cast("long" if m != "rtt_sum_ms" else "double").alias(f"{s}_{m}")
+                for s in ("v4", "v6")
+                for m in ("packets_sent", "packets_lost", "valid_rtt_count")
+            ],
+            F.sum("v4_rtt_sum_ms").alias("v4_rtt_sum_ms"),
+            F.sum("v6_rtt_sum_ms").alias("v6_rtt_sum_ms"),
+        )
+    )
 
     paired_ids = pairs.select(F.col("v4_result_id").alias("result_id")).unionByName(pairs.select(F.col("v6_result_id").alias("result_id")))
-    unpaired = (eligible.join(paired_ids, "result_id", "left_anti")
-                .groupBy(*keys).agg(F.sum((F.col("af") == 4).cast("long")).alias("unpaired_v4_results"),
-                                    F.sum((F.col("af") == 6).cast("long")).alias("unpaired_v6_results"),
-                                    F.first("country_code").alias("_cc")))
+    unpaired = (
+        eligible.join(paired_ids, "result_id", "left_anti")
+        .groupBy(*keys)
+        .agg(
+            F.sum((F.col("af") == 4).cast("long")).alias("unpaired_v4_results"),
+            F.sum((F.col("af") == 6).cast("long")).alias("unpaired_v6_results"),
+            F.first("country_code").alias("_cc"),
+        )
+    )
     out = agg_pairs.join(unpaired, keys, "full_outer")
-    out = (out.withColumn("country_code", F.coalesce("country_code", "_cc")).drop("_cc")
-              .fillna(0, subset=["pairs", "unpaired_v4_results", "unpaired_v6_results", "v4_packets_sent", "v4_packets_lost",
-                                 "v4_valid_rtt_count", "v6_packets_sent", "v6_packets_lost", "v6_valid_rtt_count"]))
+    out = (
+        out.withColumn("country_code", F.coalesce("country_code", "_cc"))
+        .drop("_cc")
+        .fillna(
+            0,
+            subset=[
+                "pairs",
+                "unpaired_v4_results",
+                "unpaired_v6_results",
+                "v4_packets_sent",
+                "v4_packets_lost",
+                "v4_valid_rtt_count",
+                "v6_packets_sent",
+                "v6_packets_lost",
+                "v6_valid_rtt_count",
+            ],
+        )
+    )
     msm = F.create_map(*[x for t, (a, b) in TARGET_PAIRS.items() for x in (F.lit(t), F.array(F.lit(a), F.lit(b)))])
-    return (out.withColumnRenamed("v4_valid_rtt_count", "v4_rtt_count").withColumnRenamed("v6_valid_rtt_count", "v6_rtt_count")
-               .withColumn("measurement_id_v4", msm[F.col("target")][0]).withColumn("measurement_id_v6", msm[F.col("target")][1]))
+    return (
+        out.withColumnRenamed("v4_valid_rtt_count", "v4_rtt_count")
+        .withColumnRenamed("v6_valid_rtt_count", "v6_rtt_count")
+        .withColumn("measurement_id_v4", msm[F.col("target")][0])
+        .withColumn("measurement_id_v6", msm[F.col("target")][1])
+    )
 
 
 # ---------------------------------------------------------------------------- coverage
-def coverage(spark: SparkSession, day, cohort: DataFrame, members: DataFrame, interval_s: dict[int, int],
-             processed: DataFrame, silver_status: DataFrame, quarantine: DataFrame) -> DataFrame:
+def coverage(
+    spark: SparkSession,
+    day,
+    cohort: DataFrame,
+    members: DataFrame,
+    interval_s: dict[int, int],
+    processed: DataFrame,
+    silver_status: DataFrame,
+    quarantine: DataFrame,
+) -> DataFrame:
     """Lưới đủ 24 giờ (giờ VN) × cohort × measurement, kể cả giờ không có dữ liệu."""
-    from lakehouse.silver import MEASUREMENTS
-
-    hours = spark.sql(f"""SELECT explode(sequence(TIMESTAMP_NTZ'{day} 00:00:00', TIMESTAMP_NTZ'{day} 23:00:00', INTERVAL 1 HOUR)) AS event_hour_local""")
-    hours = hours.withColumn("event_hour_utc", F.to_utc_timestamp(F.col("event_hour_local").cast("timestamp"), REPORT_TZ)) \
-        .withColumn("ictrl_dt", F.lit(day).cast("date"))
-    msm = spark.createDataFrame([(m, af, t, interval_s.get(m, 240)) for m, (af, t) in MEASUREMENTS.items()],
-                                "measurement_id int, af int, target string, interval_s int")
+    hours = spark.sql(
+        f"""SELECT explode(sequence(TIMESTAMP_NTZ'{day} 00:00:00', TIMESTAMP_NTZ'{day} 23:00:00', INTERVAL 1 HOUR)) AS event_hour_local"""
+    )
+    hours = hours.withColumn("event_hour_utc", F.to_utc_timestamp(F.col("event_hour_local").cast("timestamp"), REPORT_TZ)).withColumn(
+        "ictrl_dt", F.lit(day).cast("date")
+    )
+    msm = spark.createDataFrame(
+        [(m, af, t, interval_s.get(m, 240)) for m, (af, t) in MEASUREMENTS.items()],
+        "measurement_id int, af int, target string, interval_s int",
+    )
     expected = members.groupBy("probe_set_version", "af").agg(F.count("*").alias("expected_probes"))
     grid = hours.crossJoin(msm).join(expected, "af")
 
@@ -185,17 +268,37 @@ def coverage(spark: SparkSession, day, cohort: DataFrame, members: DataFrame, in
         F.countDistinct(F.when(F.col("is_eligible"), F.col("probe_id"))).alias("probes_observed"),
         F.sum(F.col("is_source_corrected").cast("long")).alias("results_source_corrected"),
         F.max("event_time").alias("max_event_time"),
-        F.max("silver_loaded_at").alias("silver_loaded_at"))
+        F.max("silver_loaded_at").alias("silver_loaded_at"),
+    )
 
-    g = (grid.join(observed, ["probe_set_version", "measurement_id", "event_hour_utc"], "left")
-             .join(processed, ["probe_set_version", "measurement_id", "event_hour_utc"], "left")
-             .join(silver_status, ["ictrl_dt", "measurement_id"], "left")
-             .join(quarantine, ["measurement_id", "event_hour_utc"], "left"))
-    g = g.fillna(0, subset=["results_total_raw", "results_eligible", "results_excluded_not_public", "results_excluded_clock",
-                            "probes_observed", "results_source_corrected", "quarantine_records", "overlap_unchanged_skipped",
-                            "manifests"])
+    g = (
+        grid.join(observed, ["probe_set_version", "measurement_id", "event_hour_utc"], "left")
+        .join(processed, ["probe_set_version", "measurement_id", "event_hour_utc"], "left")
+        .join(silver_status, ["ictrl_dt", "measurement_id"], "left")
+        .join(quarantine, ["measurement_id", "event_hour_utc"], "left")
+    )
+    g = g.fillna(
+        0,
+        subset=[
+            "results_total_raw",
+            "results_eligible",
+            "results_excluded_not_public",
+            "results_excluded_clock",
+            "probes_observed",
+            "results_source_corrected",
+            "quarantine_records",
+            "overlap_unchanged_skipped",
+            "manifests",
+        ],
+    )
     expected_results = F.col("expected_probes") * (F.lit(3600) / F.col("interval_s"))
-    return (g.withColumn("expected_results", expected_results.cast("long"))
-             .withColumn("data_state", F.when(F.col("results_total_raw") > 0, "measured")
-                         .when(F.col("manifests") > 0, "processed_no_results").otherwise("not_processed"))
-             .withColumn("silver_status", F.coalesce("silver_status", F.lit("not_built"))))
+    return (
+        g.withColumn("expected_results", expected_results.cast("long"))
+        .withColumn(
+            "data_state",
+            F.when(F.col("results_total_raw") > 0, "measured")
+            .when(F.col("manifests") > 0, "processed_no_results")
+            .otherwise("not_processed"),
+        )
+        .withColumn("silver_status", F.coalesce("silver_status", F.lit("not_built")))
+    )

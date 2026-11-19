@@ -32,6 +32,7 @@ from lakehouse.common import SQL_DIR, days_for_range, log_event, new_run_id, par
 from lakehouse.metrics import StageMetrics, job_metrics
 from lakehouse.publication import (
     PUBLISHED,
+    PartitionStatus,
     latest_snapshot,
     partition_statuses,
     published_snapshot,
@@ -42,8 +43,15 @@ from lakehouse.publication import (
 PROBE_SET_DIR = Path("/opt/app/config/probe_sets")
 SILVER_FACT = "nessie.silver.fact_ping_result"
 SILVER_REPLY = "nessie.silver.fact_ping_reply"
-MARTS = ["quality_hourly_target", "quality_hourly_country", "quality_hourly_asn", "quality_hourly_probe",
-         "rtt_histogram_hourly", "ipv4_ipv6_paired_hourly", "coverage_hourly"]
+MARTS = [
+    "quality_hourly_target",
+    "quality_hourly_country",
+    "quality_hourly_asn",
+    "quality_hourly_probe",
+    "rtt_histogram_hourly",
+    "ipv4_ipv6_paired_hourly",
+    "coverage_hourly",
+]
 
 
 # ---------------------------------------------------------------------------- đọc đầu vào
@@ -53,25 +61,36 @@ def read_published_silver(spark: SparkSession, day: date, measurement_ids: list[
 
     def load(table: str) -> DataFrame:
         return read_published(spark, table, pinned[table]).filter(
-            (F.col("ictrl_dt") == F.lit(day)) & F.col("measurement_id").isin(measurement_ids or [-1]))
+            (F.col("ictrl_dt") == F.lit(day)) & F.col("measurement_id").isin(measurement_ids or [-1])
+        )
 
     return load(SILVER_FACT), load(SILVER_REPLY)
 
 
 def coverage_inputs(spark: SparkSession, day: date, silver_status: dict[int, str]):
     """Đầu vào cho mart coverage: interval đo, giờ đã có manifest, trạng thái Silver, số bản ghi quarantine."""
-    interval = {r["measurement_id"]: r["interval_s"] for r in spark.table("nessie.silver.dim_measurement")
-                .filter("is_current AND NOT is_unknown_member").select("measurement_id", "interval_s").collect()}
-    processed = (spark.table("nessie.bronze.ingest_manifest")
-                 .filter((F.col("entity") == "ping_result_raw") & (F.col("bronze_status") == "loaded"))
-                 .groupBy("probe_set_version", "measurement_id", F.col("window_start").alias("event_hour_utc"))
-                 .agg(F.countDistinct("manifest_path").alias("manifests"), F.max("unchanged").alias("overlap_unchanged_skipped")))
-    status = spark.createDataFrame([(day, m, s) for m, s in silver_status.items()] or [(day, -1, "none")],
-                                   "ictrl_dt date, measurement_id int, silver_status string")
-    quarantine = (spark.table("nessie.bronze.quarantine")
-                  .filter((F.col("entity") == "ping_result_raw") & (F.col("ictrl_dt") == F.lit(day)) & F.col("event_ts").isNotNull())
-                  .groupBy("measurement_id", F.date_trunc("hour", F.timestamp_seconds("event_ts")).alias("event_hour_utc"))
-                  .agg(F.count("*").alias("quarantine_records")))
+    interval = {
+        r["measurement_id"]: r["interval_s"]
+        for r in spark.table("nessie.silver.dim_measurement")
+        .filter("is_current AND NOT is_unknown_member")
+        .select("measurement_id", "interval_s")
+        .collect()
+    }
+    processed = (
+        spark.table("nessie.bronze.ingest_manifest")
+        .filter((F.col("entity") == "ping_result_raw") & (F.col("bronze_status") == "loaded"))
+        .groupBy("probe_set_version", "measurement_id", F.col("window_start").alias("event_hour_utc"))
+        .agg(F.countDistinct("manifest_path").alias("manifests"), F.max("unchanged").alias("overlap_unchanged_skipped"))
+    )
+    status = spark.createDataFrame(
+        [(day, m, s) for m, s in silver_status.items()] or [(day, -1, "none")], "ictrl_dt date, measurement_id int, silver_status string"
+    )
+    quarantine = (
+        spark.table("nessie.bronze.quarantine")
+        .filter((F.col("entity") == "ping_result_raw") & (F.col("ictrl_dt") == F.lit(day)) & F.col("event_ts").isNotNull())
+        .groupBy("measurement_id", F.date_trunc("hour", F.timestamp_seconds("event_ts")).alias("event_hour_utc"))
+        .agg(F.count("*").alias("quarantine_records"))
+    )
     return interval, processed, status, quarantine
 
 
@@ -79,8 +98,14 @@ def coverage_inputs(spark: SparkSession, day: date, silver_status: dict[int, str
 def write_mart(spark: SparkSession, name: str, df: DataFrame, day: date) -> int | None:
     table = f"nessie.gold.{name}"
     if not spark.catalog.tableExists(table):
-        (df.writeTo(table).using("iceberg").partitionedBy(F.col("ictrl_dt"))
-           .tableProperty("format-version", "2").tableProperty("write.parquet.compression-codec", "zstd").create())
+        (
+            df.writeTo(table)
+            .using("iceberg")
+            .partitionedBy(F.col("ictrl_dt"))
+            .tableProperty("format-version", "2")
+            .tableProperty("write.parquet.compression-codec", "zstd")
+            .create()
+        )
     else:
         df.select(*[f.name for f in spark.table(table).schema.fields]).writeTo(table).overwrite(F.col("ictrl_dt") == F.lit(day))
     return latest_snapshot(spark, table)
@@ -110,8 +135,12 @@ def build_day(spark: SparkSession, day: date, run_id: str, dq: DqRecorder) -> st
     marts = {k: gold.with_meta(v, run_id, built_at).cache() for k, v in marts.items()}
 
     checks = gold_consistency_checks(
-        target=marts["quality_hourly_target"], country=marts["quality_hourly_country"], asn=marts["quality_hourly_asn"],
-        probe=marts["quality_hourly_probe"], hist=marts["rtt_histogram_hourly"], cov=marts["coverage_hourly"],
+        target=marts["quality_hourly_target"],
+        country=marts["quality_hourly_country"],
+        asn=marts["quality_hourly_asn"],
+        probe=marts["quality_hourly_probe"],
+        hist=marts["rtt_histogram_hourly"],
+        cov=marts["coverage_hourly"],
         pairs=marts["ipv4_ipv6_paired_hourly"],
     ) + run_suite(marts["quality_hourly_target"], "gold_quality_hourly_target", gx_suites.gold_quality_target(), run_id)
     scope, now = f"ictrl_dt={day}", datetime.now(timezone.utc)
@@ -120,8 +149,13 @@ def build_day(spark: SparkSession, day: date, run_id: str, dq: DqRecorder) -> st
     if has_critical_failure(checks):
         dq.write("gold", "nessie.gold.*", scope, checks, None)
         failed = failed_names(checks, CRITICAL)
-        set_partition_status(spark, [("gold", f"nessie.gold.{k}", day, m, "blocked", None, run_id, dq.dq_run_id, None,
-                                      "critical: " + "; ".join(failed)[:900], now) for k in MARTS for m in measurement_ids])
+        reason = "critical: " + "; ".join(failed)[:900]
+        rows = [
+            PartitionStatus("gold", f"nessie.gold.{k}", day, m, "blocked", None, run_id, dq.dq_run_id, None, reason, now)
+            for k in MARTS
+            for m in measurement_ids
+        ]
+        set_partition_status(spark, rows)
         log_event("gold", "day_blocked", ictrl_dt=str(day), failed=failed)
         return "blocked"
 
@@ -132,10 +166,14 @@ def build_day(spark: SparkSession, day: date, run_id: str, dq: DqRecorder) -> st
     dq.write("gold", "nessie.gold.*", scope, checks, snapshots["quality_hourly_target"])
 
     status = "published_with_warnings" if has_warning(checks) else "published"
-    set_partition_status(spark, [("gold", f"nessie.gold.{k}", day, m, status if m in published else "blocked_upstream",
-                                  counts[k], run_id, dq.dq_run_id, snapshots[k],
-                                  None if m in published else f"silver status {silver_status.get(m)}", now)
-                                 for k in MARTS for m in measurement_ids])
+    rows = []
+    for k in MARTS:
+        for m in measurement_ids:
+            m_status, reason = (status, None) if m in published else ("blocked_upstream", f"silver status {silver_status.get(m)}")
+            rows.append(
+                PartitionStatus("gold", f"nessie.gold.{k}", day, m, m_status, counts[k], run_id, dq.dq_run_id, snapshots[k], reason, now)
+            )
+    set_partition_status(spark, rows)
     log_event("gold", "day_written", ictrl_dt=str(day), status=status, rows=counts)
     for df in [cohort, eligible, members, *marts.values()]:
         df.unpersist()
@@ -148,20 +186,35 @@ def push_freshness(spark: SparkSession, m: StageMetrics) -> None:
     if not spark.catalog.tableExists("nessie.gold.coverage_hourly"):
         return
     cov = spark.table("nessie.gold.coverage_hourly")
-    for r in cov.filter("data_state = 'measured'").groupBy("probe_set_version", "measurement_id").agg(
-            F.max("max_event_time").alias("mx")).collect():
-        m.set("ripe_gold_max_event_timestamp_seconds", "event_time lớn nhất đã có trong Gold (Unix giây)",
-              r["mx"].timestamp(), probe_set_version=r["probe_set_version"], measurement_id=str(r["measurement_id"]))
-    latest = (cov.filter("data_state <> 'not_processed'").groupBy("probe_set_version", "measurement_id")
-              .agg(F.max("event_hour_utc").alias("h")))
+    for r in (
+        cov.filter("data_state = 'measured'")
+        .groupBy("probe_set_version", "measurement_id")
+        .agg(F.max("max_event_time").alias("mx"))
+        .collect()
+    ):
+        m.set(
+            "ripe_gold_max_event_timestamp_seconds",
+            "event_time lớn nhất đã có trong Gold (Unix giây)",
+            r["mx"].timestamp(),
+            probe_set_version=r["probe_set_version"],
+            measurement_id=str(r["measurement_id"]),
+        )
+    latest = (
+        cov.filter("data_state <> 'not_processed'").groupBy("probe_set_version", "measurement_id").agg(F.max("event_hour_utc").alias("h"))
+    )
     for r in cov.join(latest, ["probe_set_version", "measurement_id"]).filter(F.col("event_hour_utc") == F.col("h")).collect():
         labels = {"probe_set_version": r["probe_set_version"], "measurement_id": str(r["measurement_id"])}
         m.set("ripe_gold_latest_hour_results", "Số result của giờ gần nhất đã xử lý", r["results_total_raw"], **labels)
-        m.set("ripe_gold_latest_hour_completeness_ratio", "Độ đầy đủ ước tính của giờ gần nhất đã xử lý",
-              r["results_total_raw"] / r["expected_results"] if r["expected_results"] else 0, **labels)
+        m.set(
+            "ripe_gold_latest_hour_completeness_ratio",
+            "Độ đầy đủ ước tính của giờ gần nhất đã xử lý",
+            r["results_total_raw"] / r["expected_results"] if r["expected_results"] else 0,
+            **labels,
+        )
         m.set("ripe_gold_latest_hour_timestamp_seconds", "Giờ gần nhất đã xử lý (Unix giây)", r["h"].timestamp(), **labels)
-        m.set("ripe_gold_latest_hour_measured", "1 nếu giờ gần nhất đã xử lý có dữ liệu",
-              1 if r["data_state"] == "measured" else 0, **labels)
+        m.set(
+            "ripe_gold_latest_hour_measured", "1 nếu giờ gần nhất đã xử lý có dữ liệu", 1 if r["data_state"] == "measured" else 0, **labels
+        )
 
 
 # ---------------------------------------------------------------------------- entry point
@@ -192,15 +245,19 @@ def main() -> int:
                 results = {str(d): build_day(spark, d, run_id, dq) for d in days}
                 log_event("gold", "run_finished", run_id=run_id, results=results)
                 for status in ("published", "published_with_warnings", "blocked"):
-                    m.set("ripe_partition_days", "Số ngày theo trạng thái công bố, lần chạy gần nhất",
-                          sum(1 for r in results.values() if r == status), layer="gold", status=status)
+                    m.set(
+                        "ripe_partition_days",
+                        "Số ngày theo trạng thái công bố, lần chạy gần nhất",
+                        sum(1 for r in results.values() if r == status),
+                        layer="gold",
+                        status=status,
+                    )
                 push_freshness(spark, m)
                 m.ok = "blocked" not in results.values()
                 return 0 if m.ok else 2
             finally:
                 for severity, n in dq.failed.items():
-                    m.set("ripe_dq_failed_checks", "Số kiểm tra chất lượng thất bại, lần chạy gần nhất", n,
-                          layer="gold", severity=severity)
+                    m.set("ripe_dq_failed_checks", "Số kiểm tra chất lượng thất bại, lần chạy gần nhất", n, layer="gold", severity=severity)
         finally:
             spark.stop()
 

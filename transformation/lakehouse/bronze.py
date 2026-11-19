@@ -21,57 +21,57 @@ from pyspark.sql.types import (
     StructType,
 )
 
-STAGED_RESULT_SCHEMA = StructType([
-    StructField("measurement_id", LongType()),
-    StructField("probe_id", LongType()),
-    StructField("event_ts", LongType()),
-    StructField("parse_status", StringType()),
-    StructField("raw_json", StringType()),
-    StructField("raw_sha256", StringType()),
-    StructField("line_no", LongType()),
-    StructField("request_index", LongType()),
-    StructField("change_type", StringType()),
-    StructField("run_id", StringType()),
-    StructField("fetched_at", StringType()),
-    StructField("_dlt_load_id", StringType()),
-    StructField("_dlt_id", StringType()),
-])
+STAGED_RESULT_SCHEMA = StructType(
+    [
+        StructField("measurement_id", LongType()),
+        StructField("probe_id", LongType()),
+        StructField("event_ts", LongType()),
+        StructField("parse_status", StringType()),
+        StructField("raw_json", StringType()),
+        StructField("raw_sha256", StringType()),
+        StructField("line_no", LongType()),
+        StructField("request_index", LongType()),
+        StructField("change_type", StringType()),
+        StructField("run_id", StringType()),
+        StructField("fetched_at", StringType()),
+        StructField("_dlt_load_id", StringType()),
+        StructField("_dlt_id", StringType()),
+    ]
+)
 
-STAGED_METADATA_SCHEMA = StructType([
-    StructField("entity_id", LongType()),
-    StructField("fetch_status", StringType()),
-    StructField("raw_json", StringType()),
-    StructField("raw_sha256", StringType()),
-    StructField("raw_encoding", StringType()),
-    StructField("is_public", BooleanType()),
-    StructField("observed_at", StringType()),
-    StructField("request_index", LongType()),
-    StructField("run_id", StringType()),
-    StructField("_dlt_load_id", StringType()),
-    StructField("_dlt_id", StringType()),
-])
+STAGED_METADATA_SCHEMA = StructType(
+    [
+        StructField("entity_id", LongType()),
+        StructField("fetch_status", StringType()),
+        StructField("raw_json", StringType()),
+        StructField("raw_sha256", StringType()),
+        StructField("raw_encoding", StringType()),
+        StructField("is_public", BooleanType()),
+        StructField("observed_at", StringType()),
+        StructField("request_index", LongType()),
+        StructField("run_id", StringType()),
+        StructField("_dlt_load_id", StringType()),
+        StructField("_dlt_id", StringType()),
+    ]
+)
 
-PING_SCHEMA = StructType([
-    StructField("msm_id", LongType()),
-    StructField("prb_id", LongType()),
-    StructField("timestamp", LongType()),
-    StructField("af", LongType()),
-    StructField("type", StringType()),
-    StructField("stored_timestamp", LongType()),
-    StructField("fw", LongType()),
-    StructField("mver", StringType()),
-    StructField("_corrupt", StringType()),
-])
+PING_SCHEMA = StructType(
+    [
+        StructField("msm_id", LongType()),
+        StructField("prb_id", LongType()),
+        StructField("timestamp", LongType()),
+        StructField("af", LongType()),
+        StructField("type", StringType()),
+        StructField("stored_timestamp", LongType()),
+        StructField("fw", LongType()),
+        StructField("mver", StringType()),
+        StructField("_corrupt", StringType()),
+    ]
+)
 
 ID_SCHEMA = StructType([StructField("id", LongType()), StructField("_corrupt", StringType())])
 
 JSON_OPTS = {"mode": "PERMISSIVE", "columnNameOfCorruptRecord": "_corrupt"}
-
-# Thông tin manifest gắn vào từng object (một dòng mỗi object).
-MANIFEST_OBJECT_COLUMNS = [
-    "source_object", "manifest_path", "expected_measurement_id", "expected_af", "window_start_ts",
-    "window_end_ts", "ictrl_dt", "probe_set_version", "expected_load_id",
-]
 
 
 def parse_staged(lines: DataFrame, schema: StructType) -> DataFrame:
@@ -113,10 +113,13 @@ def transform_results(staged: DataFrame, manifest_objects: DataFrame, bronze_run
         p["stored_timestamp"].alias("stored_ts"),
         F.col("ictrl_dt"),
         F.timestamp_seconds("window_start_ts").alias("window_start"),
-        "raw_json", "raw_sha256", "change_type",
+        "raw_json",
+        "raw_sha256",
+        "change_type",
         p["fw"].cast("int").alias("fw"),
         p["mver"].alias("mver"),
-        "source_object", "manifest_path",
+        "source_object",
+        "manifest_path",
         F.col("run_id").alias("ingest_run_id"),
         F.col("_dlt_load_id").alias("dlt_load_id"),
         F.to_timestamp("fetched_at").alias("fetched_at"),
@@ -128,26 +131,40 @@ def transform_results(staged: DataFrame, manifest_objects: DataFrame, bronze_run
     order = Window.partitionBy("record_uid").orderBy("fetched_at", "ingest_run_id", "source_object")
     valid = valid.withColumn("_rn", F.row_number().over(order)).filter("_rn = 1").drop("_rn")
 
-    quarantine = checked.filter(F.col("reason").isNotNull()).select(
-        _uid(F.lit("ping_result_raw"), F.col("manifest_path"), F.col("raw_sha256"), F.col("reason"),
-             F.col("request_index"), F.col("line_no")).alias("quarantine_uid"),
-        F.lit("ping_result_raw").alias("entity"),
-        "reason",
-        F.col("expected_measurement_id").cast("int").alias("measurement_id"),
-        F.col("probe_id").alias("entity_id"),
-        F.col("event_ts"),
-        "raw_json", "raw_sha256", "source_object", "manifest_path",
-        F.col("run_id").alias("ingest_run_id"),
-        "ictrl_dt",
-        F.lit(loaded_at).cast("timestamp").alias("detected_at"),
-        F.lit(bronze_run_id).alias("bronze_run_id"),
-        F.lit("pending").alias("reprocess_status"),
-    ).dropDuplicates(["quarantine_uid"])
+    quarantine = (
+        checked.filter(F.col("reason").isNotNull())
+        .select(
+            _uid(
+                F.lit("ping_result_raw"),
+                F.col("manifest_path"),
+                F.col("raw_sha256"),
+                F.col("reason"),
+                F.col("request_index"),
+                F.col("line_no"),
+            ).alias("quarantine_uid"),
+            F.lit("ping_result_raw").alias("entity"),
+            "reason",
+            F.col("expected_measurement_id").cast("int").alias("measurement_id"),
+            F.col("probe_id").alias("entity_id"),
+            F.col("event_ts"),
+            "raw_json",
+            "raw_sha256",
+            "source_object",
+            "manifest_path",
+            F.col("run_id").alias("ingest_run_id"),
+            "ictrl_dt",
+            F.lit(loaded_at).cast("timestamp").alias("detected_at"),
+            F.lit(bronze_run_id).alias("bronze_run_id"),
+            F.lit("pending").alias("reprocess_status"),
+        )
+        .dropDuplicates(["quarantine_uid"])
+    )
     return valid, quarantine
 
 
-def transform_metadata(staged: DataFrame, manifest_objects: DataFrame, entity: str, id_column: str,
-                       bronze_run_id: str, loaded_at) -> tuple[DataFrame, DataFrame]:
+def transform_metadata(
+    staged: DataFrame, manifest_objects: DataFrame, entity: str, id_column: str, bronze_run_id: str, loaded_at
+) -> tuple[DataFrame, DataFrame]:
     joined = staged.join(F.broadcast(manifest_objects), "source_object", "left")
     parsed = F.from_json("raw_json", ID_SCHEMA, JSON_OPTS)
     reason = (
@@ -159,37 +176,59 @@ def transform_metadata(staged: DataFrame, manifest_objects: DataFrame, entity: s
     )
     checked = joined.withColumn("reason", reason)
     id_type = "int" if id_column == "measurement_id" else "bigint"
-    valid = checked.filter(F.col("reason").isNull()).select(
-        _uid(F.col("entity_id"), F.col("run_id")).alias("record_uid"),
-        F.col("entity_id").cast(id_type).alias(id_column),
-        "fetch_status", "is_public", "raw_json", "raw_sha256", "raw_encoding",
-        F.to_timestamp("observed_at").alias("observed_at"),
-        "ictrl_dt", "source_object", "manifest_path",
-        F.col("run_id").alias("ingest_run_id"),
-        F.col("_dlt_load_id").alias("dlt_load_id"),
-        "probe_set_version",
-        F.lit(bronze_run_id).alias("bronze_run_id"),
-        F.lit(loaded_at).cast("timestamp").alias("bronze_loaded_at"),
-    ).dropDuplicates(["record_uid"])
-    quarantine = checked.filter(F.col("reason").isNotNull()).select(
-        _uid(F.lit(entity), F.col("manifest_path"), F.col("raw_sha256"), F.col("reason"), F.col("_dlt_id")).alias("quarantine_uid"),
-        F.lit(entity).alias("entity"), "reason",
-        F.lit(None).cast("int").alias("measurement_id"),
-        F.col("entity_id"), F.lit(None).cast("bigint").alias("event_ts"),
-        "raw_json", "raw_sha256", "source_object", "manifest_path",
-        F.col("run_id").alias("ingest_run_id"), "ictrl_dt",
-        F.lit(loaded_at).cast("timestamp").alias("detected_at"),
-        F.lit(bronze_run_id).alias("bronze_run_id"),
-        F.lit("pending").alias("reprocess_status"),
-    ).dropDuplicates(["quarantine_uid"])
+    valid = (
+        checked.filter(F.col("reason").isNull())
+        .select(
+            _uid(F.col("entity_id"), F.col("run_id")).alias("record_uid"),
+            F.col("entity_id").cast(id_type).alias(id_column),
+            "fetch_status",
+            "is_public",
+            "raw_json",
+            "raw_sha256",
+            "raw_encoding",
+            F.to_timestamp("observed_at").alias("observed_at"),
+            "ictrl_dt",
+            "source_object",
+            "manifest_path",
+            F.col("run_id").alias("ingest_run_id"),
+            F.col("_dlt_load_id").alias("dlt_load_id"),
+            "probe_set_version",
+            F.lit(bronze_run_id).alias("bronze_run_id"),
+            F.lit(loaded_at).cast("timestamp").alias("bronze_loaded_at"),
+        )
+        .dropDuplicates(["record_uid"])
+    )
+    quarantine = (
+        checked.filter(F.col("reason").isNotNull())
+        .select(
+            _uid(F.lit(entity), F.col("manifest_path"), F.col("raw_sha256"), F.col("reason"), F.col("_dlt_id")).alias("quarantine_uid"),
+            F.lit(entity).alias("entity"),
+            "reason",
+            F.lit(None).cast("int").alias("measurement_id"),
+            F.col("entity_id"),
+            F.lit(None).cast("bigint").alias("event_ts"),
+            "raw_json",
+            "raw_sha256",
+            "source_object",
+            "manifest_path",
+            F.col("run_id").alias("ingest_run_id"),
+            "ictrl_dt",
+            F.lit(loaded_at).cast("timestamp").alias("detected_at"),
+            F.lit(bronze_run_id).alias("bronze_run_id"),
+            F.lit("pending").alias("reprocess_status"),
+        )
+        .dropDuplicates(["quarantine_uid"])
+    )
     return valid, quarantine
 
 
 def batch_integrity_errors(staged: DataFrame, manifests: list[dict]) -> list[str]:
     """Kiểm tra mức batch: số dòng mỗi manifest và load_id của từng dòng."""
     errors = []
-    counts = {r["source_object"]: (r["n"], r["load_ids"]) for r in staged.groupBy("source_object").agg(
-        F.count("*").alias("n"), F.collect_set("_dlt_load_id").alias("load_ids")).collect()}
+    counts = {
+        r["source_object"]: (r["n"], r["load_ids"])
+        for r in staged.groupBy("source_object").agg(F.count("*").alias("n"), F.collect_set("_dlt_load_id").alias("load_ids")).collect()
+    }
     for m in manifests:
         expected = m["counts"].get("staged", m["counts"].get("records", 0))
         got = 0

@@ -222,14 +222,10 @@ docker compose exec -T -w /opt/app spark-iceberg python -m pytest -q -p no:cache
 
 > Trên Git Bash (Windows), thêm `MSYS_NO_PATHCONV=1` trước các lệnh `docker compose exec` có đường dẫn `/opt/...`. Nếu không, Git Bash tự đổi đường dẫn thành `C:/Program Files/Git/opt/...`.
 
-### Pipeline cũ (legacy, giữ để đối chiếu)
+### Pipeline cũ (legacy)
 
-`transformation/legacy/staging_to_bronze.py` và `transformation/legacy/bronze_to_silver.py` (SCD1) đọc `bronze.ping_results`, ghi `silver.legacy_*`. Đã được thay bằng `bronze_ingest.py` và `silver_build.py`.
-
-```bash
-docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/legacy/bronze_to_silver.py
-docker compose exec -T -w /opt/app/transformation/legacy spark-iceberg python -m unittest test_staging_to_bronze test_bronze_to_silver
-```
+Job thế hệ đầu (`staging_to_bronze.py`, `bronze_to_silver.py`, SCD1) đã bị xoá khỏi repo; xem lại bằng `git show 90b7c8a:transformation/legacy/`.
+Các bảng `bronze.ping_results` và `silver.legacy_*` do chúng tạo ra vẫn còn trong catalog, chỉ xoá khi chủ đồ án đồng ý.
 
 ## 5. Truy vấn bằng SQL client qua Trino
 

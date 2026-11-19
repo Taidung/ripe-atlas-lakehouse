@@ -8,7 +8,8 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from typing import NamedTuple
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -22,8 +23,24 @@ def latest_snapshot(spark: SparkSession, table: str) -> int | None:
     return row[0] if row else None
 
 
-def set_partition_status(spark: SparkSession, rows: list[tuple]) -> None:
-    """rows: (layer, table_name, ictrl_dt, measurement_id, status, row_count, run_id, dq_run_id, snapshot_id, reason, updated_at)."""
+class PartitionStatus(NamedTuple):
+    """Một dòng của ops.partition_status (đúng thứ tự cột trong transformation/sql/ops.sql)."""
+
+    layer: str
+    table_name: str
+    ictrl_dt: date
+    measurement_id: int
+    status: str
+    row_count: int | None
+    pipeline_run_id: str
+    dq_run_id: str
+    snapshot_id: int | None
+    reason: str | None
+    updated_at: datetime
+
+
+def set_partition_status(spark: SparkSession, rows: list[PartitionStatus]) -> None:
+    """Upsert trạng thái công bố theo (table_name, ictrl_dt, measurement_id)."""
     if not rows:
         return
     spark.createDataFrame(rows, spark.table(STATUS_TABLE).schema).createOrReplaceTempView("src_status")
@@ -36,16 +53,24 @@ def set_partition_status(spark: SparkSession, rows: list[tuple]) -> None:
 
 def partition_statuses(spark: SparkSession, table: str, day: date) -> dict[int, str]:
     """measurement_id -> trạng thái công bố của bảng `table` cho ngày `day`."""
-    rows = (spark.table(STATUS_TABLE).filter((F.col("table_name") == table) & (F.col("ictrl_dt") == F.lit(day)))
-            .select("measurement_id", "status").collect())
+    rows = (
+        spark.table(STATUS_TABLE)
+        .filter((F.col("table_name") == table) & (F.col("ictrl_dt") == F.lit(day)))
+        .select("measurement_id", "status")
+        .collect()
+    )
     return {r["measurement_id"]: r["status"] for r in rows}
 
 
 def published_snapshot(spark: SparkSession, table: str, day: date) -> int | None:
     """Snapshot đã công bố của `table` cho ngày `day`; lỗi nếu các measurement trỏ về các snapshot khác nhau."""
-    snapshots = {r["snapshot_id"] for r in spark.table(STATUS_TABLE)
-                 .filter((F.col("table_name") == table) & (F.col("ictrl_dt") == F.lit(day)) & F.col("status").isin(*PUBLISHED))
-                 .select("snapshot_id").collect()}
+    snapshots = {
+        r["snapshot_id"]
+        for r in spark.table(STATUS_TABLE)
+        .filter((F.col("table_name") == table) & (F.col("ictrl_dt") == F.lit(day)) & F.col("status").isin(*PUBLISHED))
+        .select("snapshot_id")
+        .collect()
+    }
     if len(snapshots) > 1:
         raise RuntimeError(f"{table} {day}: nhiều snapshot công bố khác nhau {snapshots}; chạy lại job tạo ra bảng này")
     return next(iter(snapshots), None)

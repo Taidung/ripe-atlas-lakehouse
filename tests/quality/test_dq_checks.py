@@ -44,8 +44,9 @@ def test_gx_flags_critical_failure_and_passes_clean_data(spark, unique_results, 
     clean = gx_runner.run_suite(facts, "test_fact", gx_suites.silver_fact_result(), "test-run", build_docs=False)
     assert not has_critical_failure(clean), [c for c in clean if not c["success"]]
 
-    broken = facts.unionByName(facts.limit(1)).withColumn(            # trùng khóa + rcvd > sent
-        "packets_received", F.when(F.col("result_status") == "all_received", F.lit(99)).otherwise(F.col("packets_received")))
+    broken = facts.unionByName(facts.limit(1)).withColumn(  # trùng khóa + rcvd > sent
+        "packets_received", F.when(F.col("result_status") == "all_received", F.lit(99)).otherwise(F.col("packets_received"))
+    )
     bad = gx_runner.run_suite(broken, "test_fact", gx_suites.silver_fact_result(), "test-run-2", build_docs=False)
     failed = {c["check_name"].split(":")[0] for c in bad if not c["success"] and c["severity"] == "critical"}
     assert {"expect_column_values_to_be_unique", "expect_column_pair_values_a_to_be_greater_than_b"} <= failed

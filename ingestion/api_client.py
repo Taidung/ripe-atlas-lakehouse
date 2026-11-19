@@ -13,9 +13,10 @@ Hash: `body_sha256` là SHA-256 của toàn bộ body đã giải mã Content-En
 from __future__ import annotations
 
 import hashlib
+import json
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -157,8 +158,6 @@ class AtlasHttp:
         raise AssertionError("unreachable")
 
     def get_json(self, path: str, params: dict[str, Any]) -> tuple[Any, bytes, ResponseInfo]:
-        import json
-
         body, info = self.get_bytes(path, params)
         try:
             return json.loads(body), body, info
@@ -173,7 +172,32 @@ class AtlasHttp:
             if total > limit:
                 raise ResponseTooLarge(
                     f"Response exceeded {limit} bytes for {url}; reduce PROBE_CHUNK_SIZE",
-                    status=200, url=url, retryable=False,
+                    status=200,
+                    url=url,
+                    retryable=False,
                 )
             chunks.append(chunk)
         return b"".join(chunks)
+
+
+def iter_probe_pages(
+    http: Any, probe_ids: list[int], page_size: int = 500, fields: str | None = None
+) -> Iterator[tuple[list[int], dict, ResponseInfo]]:
+    """GET probes/?id__in=... theo từng nhóm `page_size` id, đi hết mọi trang.
+
+    Yield (nhóm id đã yêu cầu, trang JSON, ResponseInfo). `http` là AtlasHttp (hoặc bản giả có get_json).
+    """
+    for start in range(0, len(probe_ids), page_size):
+        requested = probe_ids[start : start + page_size]
+        page = 1
+        while True:
+            params = {"id__in": ",".join(map(str, requested)), "page_size": page_size, "page": page, "format": "json"}
+            if fields:
+                params["fields"] = fields
+            data, _, info = http.get_json("probes/", params)
+            if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+                raise ValueError(f"Unexpected probes page: {info.url}")
+            yield requested, data, info
+            if not data.get("next"):
+                break
+            page += 1

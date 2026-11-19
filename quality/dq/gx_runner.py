@@ -41,11 +41,17 @@ def run_suite(df: DataFrame, suite_name: str, expectations, run_label: str, buil
     suite = context.suites.add_or_update(suite)
 
     validation = context.validation_definitions.add_or_update(
-        gx.ValidationDefinition(name=f"{suite_name}_vd", data=batch_definition, suite=suite))
+        gx.ValidationDefinition(name=f"{suite_name}_vd", data=batch_definition, suite=suite)
+    )
     actions = [UpdateDataDocsAction(name="update_docs")] if build_docs else []
     checkpoint = context.checkpoints.add_or_update(
-        gx.Checkpoint(name=f"{suite_name}_checkpoint", validation_definitions=[validation], actions=actions,
-                      result_format={"result_format": "SUMMARY"}))
+        gx.Checkpoint(
+            name=f"{suite_name}_checkpoint",
+            validation_definitions=[validation],
+            actions=actions,
+            result_format={"result_format": "SUMMARY"},
+        )
+    )
     result = checkpoint.run(batch_parameters={"dataframe": df}, run_id=gx.RunIdentifier(run_name=run_label))
 
     checks = []
@@ -53,15 +59,19 @@ def run_suite(df: DataFrame, suite_name: str, expectations, run_label: str, buil
         for r in validation_result.results:
             config, outcome = r.expectation_config, r.result or {}
             kwargs = {k: v for k, v in config.kwargs.items() if k != "batch_id"}
-            checks.append(make_check(
-                name=f"{config.type}:{json.dumps(kwargs, sort_keys=True, default=str)[:180]}",
-                engine=f"gx-{gx.__version__}",
-                severity=(config.meta or {}).get("severity", CRITICAL),
-                success=r.success,
-                observed=outcome.get("observed_value"),
-                unexpected=outcome.get("unexpected_count"),
-                elements=outcome.get("element_count"),
-                details={"partial_unexpected_list": outcome.get("partial_unexpected_list", [])[:10],
-                         "exception": (r.exception_info or {}).get("exception_message")},
-            ))
+            checks.append(
+                make_check(
+                    name=f"{config.type}:{json.dumps(kwargs, sort_keys=True, default=str)[:180]}",
+                    engine=f"gx-{gx.__version__}",
+                    severity=(config.meta or {}).get("severity", CRITICAL),
+                    success=r.success,
+                    observed=outcome.get("observed_value"),
+                    unexpected=outcome.get("unexpected_count"),
+                    elements=outcome.get("element_count"),
+                    details={
+                        "partial_unexpected_list": outcome.get("partial_unexpected_list", [])[:10],
+                        "exception": (r.exception_info or {}).get("exception_message"),
+                    },
+                )
+            )
     return checks

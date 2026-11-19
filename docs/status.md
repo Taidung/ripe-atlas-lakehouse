@@ -238,7 +238,7 @@ Mọi đường dẫn trong `docs/` đã đổi sang cấu trúc mới, kể c�
 | `spark/lakehouse/quality.py` (một file) | package `quality/dq/`: `results`, `gx_suites`, `gx_runner`, `checks`, `recorder` |
 | `spark/lakehouse/ops.py` | `transformation/lakehouse/publication.py` |
 | `crosscheck_gold.py`, `maintenance.py` | `gold_crosscheck.py`, `iceberg_maintenance.py` |
-| `spark/jobs/staging_to_bronze.py`, `bronze_to_silver.py` + test | `transformation/legacy/` |
+| `spark/jobs/staging_to_bronze.py`, `bronze_to_silver.py` + test | đã xoá (xem `git show 90b7c8a:transformation/legacy/`) |
 | `ingestion/{config,windows,atlas_http,records,staging,pipeline,cleanup,build_probe_set}.py` | `ingestion/{settings,time_windows,api_client,result_records,staging_store,jobs,staging_cleanup,probe_sampling}.py`; CLI ở `ingestion/cli.py` |
 | `seaweedfs/` | `storage/seaweedfs/` |
 | `trino/`, `superset/` | `serving/trino/`, `serving/superset/` |
@@ -268,6 +268,42 @@ Kiểm chứng sau refactor (2026-11-19):
   - `gold_crosscheck`: **PASS**, sai số percentile lớn nhất 0,93%.
 - CI GitHub run 44508370312 (commit `f992573`): **success**. Gồm job `lint-and-unit` (ruff, Compose, JSON/YAML, unit test) và `spark-tests` (build image, chạy `tests/transformation` + `tests/quality`).
 - Chưa chạy lại Superset `provision.py` và OpenMetadata ingestion sau khi đổi mount `config/metrics.json`; mới kiểm tra cú pháp và cấu hình Compose.
+
+## Phiên 2026-11-19: Dọn code (clean code)
+
+Đã xoá:
+- `transformation/legacy/`: job SCD1 thế hệ đầu cùng test của chúng, đã được thay thế. Xem lại bằng `git show 90b7c8a:transformation/legacy/`.
+- `requirements.txt` ở gốc repo: trùng với `pyproject.toml` và không nơi nào dùng.
+- Code không dùng:
+  - `ingestion.metrics.summarize`
+  - `lakehouse.bronze.MANIFEST_OBJECT_COLUMNS`
+  - tham số thừa của `validate_chart`
+  - một nhánh `if False` trong `test_gold.py`
+
+Gom phần trùng lặp:
+- Múi giờ báo cáo và danh sách measurement của phía Spark khai báo một lần trong `lakehouse/common.py` (trước đó nằm rải ở 5 file).
+- Phân trang API `probes/`: một hàm `ingestion.api_client.iter_probe_pages`, dùng cho cả job metadata và lấy mẫu probe.
+- Manifest ingestion: phần đầu chung (`IngestContext.manifest_header`) và bản ghi metadata (`metadata_record`).
+- Dòng `ops.partition_status`: kiểu `PartitionStatus` (NamedTuple có tên trường) thay cho bộ 11 phần tử không tên.
+
+Tách hàm dài:
+- `bronze_ingest.process` (70 dòng) tách thành `load_data`, `transform`, `row_stats`, `manifest_audit_rows`.
+- `ingestion.jobs.run_results_window` tách phần gọi API thành `fetch_results`.
+
+Định dạng:
+- `ruff format` cho toàn repo.
+- Bật lại luật E501 (dòng tối đa 140 ký tự); CI sẽ chặn dòng dài từ nay.
+- Bỏ `noqa: E712` bằng cách viết lại điều kiện Spark.
+
+Không đổi hành vi. Kiểm chứng (2026-11-19):
+- `ruff check` và `ruff format --check` sạch (có E501).
+- Unit test ingestion 42/42; test Spark `tests/transformation` + `tests/quality` 34/34; dashboard Grafana sinh lại không có diff.
+- Chạy thật toàn chuỗi:
+  - Ingestion `results` 1 giờ (msm 1001) và `metadata`. Lấy lại 2.968 result, cả 2.968 đều `unchanged`. Manifest mới có đủ 23 trường như trước.
+  - Bronze `--reprocess` 9 manifest: 11.053 dòng đọc, 0 dòng chèn mới (idempotent).
+  - Silver `published_with_warnings` với số dòng giống hệt lần chạy trước khi dọn, cùng một cảnh báo `rtt_ms`.
+  - Gold `published`, 7 mart đúng từng số dòng (74 / 5.786 / 20.333 / 25.316 / 247.479 / 13.319 / 192).
+  - `gold_crosscheck` **PASS**, sai số percentile lớn nhất 0,93%.
 
 ## Đối chiếu tiêu chí nghiệm thu cuối
 

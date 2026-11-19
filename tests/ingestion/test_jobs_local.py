@@ -39,8 +39,11 @@ class FakeAtlas:
         self.calls.append((path, params))
         msm = int(path.split("/")[1])
         wanted = set(map(int, params["probe_ids"].split(",")))
-        lines = [api_line(r) for r in self.results if r["msm_id"] == msm and r["prb_id"] in wanted
-                 and params["start"] <= r["timestamp"] <= params["stop"]]
+        lines = [
+            api_line(r)
+            for r in self.results
+            if r["msm_id"] == msm and r["prb_id"] in wanted and params["start"] <= r["timestamp"] <= params["stop"]
+        ]
         body = b"\n".join(lines) + b"\n" + (self.extra_lines if self.calls[0] == (path, params) else b"")
         return body, FakeInfo(body)
 
@@ -59,8 +62,12 @@ def make_ctx(tmp_path, atlas, run_id, chunk_size=2):
     v6 = sorted({r["prb_id"] for r in atlas.results if r["af"] == 6})
     probe_set = ProbeSet("test-v1", tuple(v4), tuple(v6), {"version": "test-v1", "probes_v4": v4, "probes_v6": v6})
     return IngestContext(
-        StagingStore.local(str(tmp_path)), probe_set, IngestSettings("test-v1", chunk_size, 3),
-        HttpSettings(concurrency=2), run_id, http_factory=lambda: atlas,
+        StagingStore.local(str(tmp_path)),
+        probe_set,
+        IngestSettings("test-v1", chunk_size, 3),
+        HttpSettings(concurrency=2),
+        run_id,
+        http_factory=lambda: atlas,
     )
 
 
@@ -171,7 +178,7 @@ def test_cleanup_finds_only_unreferenced_old_objects(tmp_path, results_1001, mon
     later = datetime.now(timezone.utc) + timedelta(hours=1)
     found, _ = find_orphans(ctx.store, timedelta(hours=0), now=later)
     assert [p.replace("\\", "/").split("/")[-1] for p in found] == ["9999.orphan.jsonl.gz"]
-    assert find_orphans(ctx.store, timedelta(hours=48), now=later)[0] == []          # còn mới -> không động vào
-    assert run_cleanup(ctx.store, 0, apply=False, now=later) and ctx.store.fs.exists(orphan)   # dry-run không xóa
+    assert find_orphans(ctx.store, timedelta(hours=48), now=later)[0] == []  # còn mới -> không động vào
+    assert run_cleanup(ctx.store, 0, apply=False, now=later) and ctx.store.fs.exists(orphan)  # dry-run không xóa
     run_cleanup(ctx.store, 0, apply=True, now=later)
     assert not ctx.store.fs.exists(orphan) and ctx.store.fs.exists(referenced)

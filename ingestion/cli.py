@@ -13,6 +13,8 @@ manifest, nên chạy lại chỉ làm lại phần thiếu (và phần chồng 
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import os
 import sys
 import time
 from collections import Counter
@@ -29,8 +31,8 @@ from ingestion.time_windows import ensure_completed, hourly_windows, incremental
 
 def make_context(args: argparse.Namespace, run_type: str) -> IngestContext:
     settings = IngestSettings.from_env()
-    if getattr(args, "probe_set", None):
-        settings = IngestSettings(args.probe_set, settings.probe_chunk_size, settings.overlap_hours)
+    if args.probe_set:
+        settings = dataclasses.replace(settings, probe_set_version=args.probe_set)
     store = StagingStore.from_settings(StagingSettings.from_env())
     probe_set = load_probe_set(settings.probe_set_version)
     ctx = IngestContext(store, probe_set, settings, HttpSettings.from_env(), new_run_id(), run_type)
@@ -56,9 +58,18 @@ def run_windows(ctx: IngestContext, measurement_ids: list[int], windows) -> int:
             except Exception as exc:  # noqa: BLE001 - ghi nhận rồi tiếp tục các job độc lập
                 failures += 1
                 status["failed"] += 1
-                log_event("ingest", "window_failed", run_id=ctx.run_id, measurement_id=msm, window=window.label,
-                          error=type(exc).__name__, message=str(exc))
-    log_event("ingest", "run_finished", run_id=ctx.run_id, run_type=ctx.run_type, jobs=len(windows) * len(measurement_ids), failures=failures)
+                log_event(
+                    "ingest",
+                    "window_failed",
+                    run_id=ctx.run_id,
+                    measurement_id=msm,
+                    window=window.label,
+                    error=type(exc).__name__,
+                    message=str(exc),
+                )
+    log_event(
+        "ingest", "run_finished", run_id=ctx.run_id, run_type=ctx.run_type, jobs=len(windows) * len(measurement_ids), failures=failures
+    )
     metrics.push_ingest_metrics(ctx.run_type, started, failures == 0, per_msm, status)
     return 1 if failures else 0
 
@@ -66,22 +77,20 @@ def run_windows(ctx: IngestContext, measurement_ids: list[int], windows) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m ingestion")
     sub = parser.add_subparsers(dest="command", required=True)
+    # Tham số chung của các lệnh gọi API theo measurement / probe set.
+    scope = argparse.ArgumentParser(add_help=False)
+    scope.add_argument("--measurements", help="Danh sách measurement_id, phân tách bằng dấu phẩy (mặc định: cả 4)")
+    scope.add_argument("--probe-set", help="probe_set_version (mặc định: biến PROBE_SET_VERSION)")
 
-    meta = sub.add_parser("metadata", help="Snapshot metadata measurement + probe")
-    meta.add_argument("--probe-set")
-    meta.add_argument("--measurements")
+    sub.add_parser("metadata", parents=[scope], help="Snapshot metadata measurement + probe")
 
     for name in ("results", "backfill"):
-        p = sub.add_parser(name, help="Ingest ping results cho [start, end) theo từng giờ")
+        p = sub.add_parser(name, parents=[scope], help="Ingest ping results cho [start, end) theo từng giờ")
         p.add_argument("--start", required=True, type=parse_instant)
         p.add_argument("--end", required=True, type=parse_instant)
-        p.add_argument("--measurements")
-        p.add_argument("--probe-set")
 
-    inc = sub.add_parser("incremental", help="Giờ vừa kết thúc + OVERLAP_HOURS giờ chồng lấn")
+    inc = sub.add_parser("incremental", parents=[scope], help="Giờ vừa kết thúc + OVERLAP_HOURS giờ chồng lấn")
     inc.add_argument("--now", type=parse_instant, help="Mốc thời gian logic (mặc định: hiện tại)")
-    inc.add_argument("--measurements")
-    inc.add_argument("--probe-set")
 
     cln = sub.add_parser("cleanup", help="Liệt kê/xóa object staging mồ côi (không manifest nào tham chiếu)")
     cln.add_argument("--orphan-min-age-hours", type=int, default=48)
@@ -115,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
             run_probe_metadata(ctx)
             ok = True
         finally:
-            url = metrics.os.environ.get("PUSHGATEWAY_URL")
+            url = os.environ.get("PUSHGATEWAY_URL")
             if url:
                 metrics.push_outcome(url, "metadata", "scheduled", ok, time.time())
         return 0

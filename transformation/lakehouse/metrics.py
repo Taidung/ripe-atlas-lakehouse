@@ -19,6 +19,7 @@ Sample = tuple[dict[str, str], float]
 class StageMetrics:
     def __init__(self, stage: str):
         self.stage = stage
+        self.ok = True  # job đặt False khi kết thúc "không thành công" mà không ném lỗi (vd partition bị chặn)
         self.gauges: dict[str, tuple[str, list[str], list[Sample]]] = {}
 
     def set(self, name: str, help_text: str, value: float, **labels: str) -> None:
@@ -34,15 +35,21 @@ class StageMetrics:
 
         now = time.time()
         reg = CollectorRegistry()
-        Gauge("ripe_job_duration_seconds", "Thời gian chạy lần gần nhất", ["stage", "run_type"], registry=reg).labels(self.stage, "scheduled").set(now - started)
-        Gauge("ripe_job_last_run_success", "1 nếu lần chạy gần nhất thành công", ["stage", "run_type"], registry=reg).labels(self.stage, "scheduled").set(1 if ok else 0)
+        Gauge("ripe_job_duration_seconds", "Thời gian chạy lần gần nhất", ["stage", "run_type"], registry=reg).labels(
+            self.stage, "scheduled"
+        ).set(now - started)
+        Gauge("ripe_job_last_run_success", "1 nếu lần chạy gần nhất thành công", ["stage", "run_type"], registry=reg).labels(
+            self.stage, "scheduled"
+        ).set(1 if ok else 0)
         for name, (help_text, keys, samples) in self.gauges.items():
             g = Gauge(name, help_text, keys, registry=reg)
             for labels, value in samples:
                 (g.labels(**labels) if keys else g).set(value)
         outcome = CollectorRegistry()
         name = "ripe_job_last_success_timestamp_seconds" if ok else "ripe_job_last_failure_timestamp_seconds"
-        Gauge(name, "Unix time lần chạy thành công/thất bại gần nhất", ["stage", "run_type"], registry=outcome).labels(self.stage, "scheduled").set(now)
+        Gauge(name, "Unix time lần chạy thành công/thất bại gần nhất", ["stage", "run_type"], registry=outcome).labels(
+            self.stage, "scheduled"
+        ).set(now)
         for key, registry in (({"stage": self.stage}, reg), ({"stage": self.stage, "outcome": "success" if ok else "failure"}, outcome)):
             try:
                 push_to_gateway(url, job="ripe_pipeline", grouping_key=key, registry=registry)
@@ -58,6 +65,6 @@ def job_metrics(stage: str) -> Iterator[StageMetrics]:
     ok = False
     try:
         yield m
-        ok = getattr(m, "ok", True)
+        ok = m.ok
     finally:
         m.push(ok, started)
