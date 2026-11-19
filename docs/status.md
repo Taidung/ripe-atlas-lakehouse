@@ -332,6 +332,7 @@ Kiểm chứng:
   - Silver bị chặn, `snapshot_id` công bố trước và sau bằng nhau.
   - Gold dựng lại từ bản cũ, đủ 41 dòng như `main`.
   - Ngày không có Silver: Gold không tạo commit mới.
+- CI GitHub run 44540182754 (commit `fa8ede0`): **success**. Cả `lint-and-unit` và `spark-tests` đều pass.
 - Chưa làm: xoá các group Pushgateway cũ không có `run_type` (lệnh trong `docs/runbook.md`).
 
 ## Đối chiếu tiêu chí nghiệm thu cuối
