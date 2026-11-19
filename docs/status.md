@@ -333,7 +333,7 @@ Kiểm chứng:
   - Gold dựng lại từ bản cũ, đủ 41 dòng như `main`.
   - Ngày không có Silver: Gold không tạo commit mới.
 - CI GitHub run 44540182754 (commit `fa8ede0`): **success**. Cả `lint-and-unit` và `spark-tests` đều pass.
-- Chưa làm: xoá các group Pushgateway cũ không có `run_type` (lệnh trong `docs/runbook.md`).
+- Đã xoá 10 group Pushgateway cũ không có `run_type` (group số liệu và group thành công/thất bại của bronze_metadata, bronze_results, silver, gold).
 
 ## Đối chiếu tiêu chí nghiệm thu cuối
 

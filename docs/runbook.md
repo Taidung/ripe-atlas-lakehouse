@@ -34,7 +34,8 @@ Các lệnh dưới đây chạy từ thư mục gốc repo. Trên Git Bash (Win
 - `bronze_ingest.py --entity metadata` chỉ xét manifest của 3 ngày gần nhất (`--lookback-days`). Manifest cũ hơn
   chưa nạp thì chạy lại với `--lookback-days N` hoặc `--start/--end`.
 - Sau khi nâng cấp lên bản có `run_type` trong grouping key, xoá các group cũ không có `run_type` một lần:
-  `for s in bronze_results bronze_metadata silver gold maintenance; do curl -X DELETE http://localhost:9091/metrics/job/ripe_pipeline/stage/$s; done`
+  `for s in bronze_results bronze_metadata silver gold maintenance; do for g in "" /outcome/success /outcome/failure; do curl -X DELETE "http://localhost:9091/metrics/job/ripe_pipeline/stage/$s$g"; done; done`
+  (đã chạy trên stack local ngày 2026-11-19; group `staging_cleanup` cố ý không có `run_type`, giữ nguyên).
 
 ## Cảnh báo
 
