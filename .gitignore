@@ -28,3 +28,4 @@ Thumbs.db
 
 # Artifact vận hành sinh ra lúc chạy (GX Data Docs, báo cáo test)
 artifacts/
+reports/
