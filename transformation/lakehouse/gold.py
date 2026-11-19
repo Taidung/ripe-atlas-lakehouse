@@ -54,9 +54,20 @@ def membership(spark: SparkSession, probe_sets: list[dict[str, Any]]) -> DataFra
 
 
 # ---------------------------------------------------------------------------- inputs
-def cohort_results(facts: DataFrame, members: DataFrame) -> DataFrame:
-    """Mọi result thuộc cohort (trước khi lọc public/clock); thêm cột giờ và mã unknown cho country/asn."""
+COHORT_HOUR_KEYS = ["probe_set_version", "measurement_id", "event_hour_utc"]
+
+
+def cohort_results(facts: DataFrame, members: DataFrame, ingested_hours: DataFrame | None = None) -> DataFrame:
+    """Mọi result thuộc cohort (trước khi lọc public/clock); thêm cột giờ và mã unknown cho country/asn.
+
+    `ingested_hours` (probe_set_version, measurement_id, event_hour_utc): các giờ mà probe set đó THỰC SỰ được ingest
+    (có manifest đã nạp vào Bronze). Một probe thuộc nhiều probe set chỉ được tính cho cohort đã được ingest giờ đó;
+    nếu không, cohort chưa từng ingest vẫn "có dữ liệu" nhờ các probe trùng và bị báo độ đầy đủ rất thấp.
+    None = không lọc (dùng trong test).
+    """
     f = facts.drop("probe_set_version").join(F.broadcast(members), ["af", "probe_id"])
+    if ingested_hours is not None:
+        f = f.join(F.broadcast(ingested_hours.select(*COHORT_HOUR_KEYS).distinct()), COHORT_HOUR_KEYS, "left_semi")
     return (
         f.withColumn("event_hour_local", local_hour("event_hour_utc"))
         .withColumn("country_code", F.coalesce("country_code", F.lit(UNKNOWN_COUNTRY)))
@@ -246,7 +257,11 @@ def coverage(
     silver_status: DataFrame,
     quarantine: DataFrame,
 ) -> DataFrame:
-    """Lưới đủ 24 giờ (giờ VN) × cohort × measurement, kể cả giờ không có dữ liệu."""
+    """Lưới đủ 24 giờ (giờ VN) × cohort × 4 measurement, kể cả giờ không có dữ liệu.
+
+    Cohort = probe set trong `members`. Probe set không có probe nào của một address family vẫn có đủ dòng cho
+    measurement của af đó, với expected_probes = 0.
+    """
     hours = spark.sql(
         f"""SELECT explode(sequence(TIMESTAMP_NTZ'{day} 00:00:00', TIMESTAMP_NTZ'{day} 23:00:00', INTERVAL 1 HOUR)) AS event_hour_local"""
     )
@@ -257,8 +272,14 @@ def coverage(
         [(m, af, t, interval_s.get(m, 240)) for m, (af, t) in MEASUREMENTS.items()],
         "measurement_id int, af int, target string, interval_s int",
     )
+    cohorts = members.select("probe_set_version").distinct()
     expected = members.groupBy("probe_set_version", "af").agg(F.count("*").alias("expected_probes"))
-    grid = hours.crossJoin(msm).join(expected, "af")
+    grid = (
+        hours.crossJoin(msm)
+        .crossJoin(cohorts)
+        .join(expected, ["probe_set_version", "af"], "left")
+        .withColumn("expected_probes", F.coalesce("expected_probes", F.lit(0)).cast("long"))
+    )
 
     observed = cohort.groupBy("probe_set_version", "measurement_id", "event_hour_utc").agg(
         F.count("*").alias("results_total_raw"),

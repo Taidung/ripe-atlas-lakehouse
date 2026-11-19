@@ -4,7 +4,8 @@ Nguyên tắc (https://prometheus.io/docs/practices/pushing/):
 - Job batch ngắn -> push một lần cuối run, PUT thay thế toàn bộ group => không còn series cũ.
 - Grouping key: job="ripe_pipeline", stage="ingest", run_type (scheduled/backfill/manual) để backfill
   không ghi đè số liệu của lịch chạy chính.
-- Label cardinality thấp: measurement_id (4 giá trị), endpoint (3), status_class (5), reason (4).
+- Label cardinality thấp: measurement_id (4 giá trị), endpoint (3), reason (4), status_class (2xx, 4xx, 5xx,
+  network_error, too_large, invalid_body).
   run_id, URL, object path chỉ nằm trong log.
 - Không có PUSHGATEWAY_URL hoặc push lỗi: chỉ ghi log cảnh báo, KHÔNG làm job thất bại.
 """
@@ -19,7 +20,7 @@ from collections import Counter
 from ingestion.logs import log_event
 
 _LOCK = threading.Lock()
-HTTP_REQUESTS: Counter = Counter()  # (endpoint, status_class) -> số request (tính theo request cuối cùng)
+HTTP_REQUESTS: Counter = Counter()  # (endpoint, status_class) -> số request logic, theo kết quả cuối cùng
 HTTP_RETRIES: Counter = Counter()  # (endpoint, reason) -> số lần retry
 HTTP_DURATION: Counter = Counter()  # endpoint -> tổng giây
 HTTP_BYTES: Counter = Counter()  # endpoint -> tổng bytes
@@ -43,10 +44,11 @@ def retry_reason(token: str) -> str:
     return "network"
 
 
-def record_http(path: str, status: int | None, duration_s: float, retries: list[str], nbytes: int = 0) -> None:
+def record_http(path: str, status: int | None, duration_s: float, retries: list[str], nbytes: int = 0, outcome: str | None = None) -> None:
+    """Ghi một request logic. `outcome` thay cho status_class khi HTTP thành công nhưng body không dùng được."""
     ep = endpoint_of(path)
     with _LOCK:
-        HTTP_REQUESTS[(ep, status_class(status))] += 1
+        HTTP_REQUESTS[(ep, outcome or status_class(status))] += 1
         HTTP_DURATION[ep] += duration_s
         HTTP_BYTES[ep] += nbytes
         for token in retries:

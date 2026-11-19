@@ -28,6 +28,13 @@ Các lệnh dưới đây chạy từ thư mục gốc repo. Trên Git Bash (Win
 - DAG mới **mặc định bị tạm dừng**. Bật bằng lệnh `docker compose exec airflow airflow dags unpause <dag_id>`.
 - Mọi task ghi lakehouse đi qua pool `lakehouse_writer` (1 slot), nên backfill và lịch chạy không ghi đồng thời.
 - Task Silver/Gold thất bại với mã thoát 2 nghĩa là **lỗi chất lượng critical**; task này không retry.
+- Mỗi job Spark nhận `--run-type` (`scheduled`, `reconcile`, `backfill`, `repair`, `manual`; chạy tay mặc định `manual`).
+  Metric được đẩy vào group Pushgateway riêng theo `run_type`, và cảnh báo "job lỗi liên tiếp" chỉ xét
+  `run_type="scheduled"`: một backfill thành công không che được lỗi của lịch chạy chính, và ngược lại.
+- `bronze_ingest.py --entity metadata` chỉ xét manifest của 3 ngày gần nhất (`--lookback-days`). Manifest cũ hơn
+  chưa nạp thì chạy lại với `--lookback-days N` hoặc `--start/--end`.
+- Sau khi nâng cấp lên bản có `run_type` trong grouping key, xoá các group cũ không có `run_type` một lần:
+  `for s in bronze_results bronze_metadata silver gold maintenance; do curl -X DELETE http://localhost:9091/metrics/job/ripe_pipeline/stage/$s; done`
 
 ## Cảnh báo
 
@@ -40,7 +47,8 @@ Các lệnh dưới đây chạy từ thư mục gốc repo. Trên Git Bash (Win
    docker compose exec airflow bash -c "grep -rh '\"event\": \"window_failed\"' /opt/airflow/logs | tail"
    ```
 3. Phân loại nguyên nhân:
-   - **HTTP 4xx** (ví dụ 404 measurement): lỗi cấu hình, không retry được.
+   - **HTTP 4xx** (ví dụ 404 measurement): lỗi cấu hình, không retry được. Metric `ripe_api_requests{status_class="4xx"}`;
+     body quá lớn là `too_large`, body không parse được là `invalid_body`.
    - **429/5xx/mạng** đã hết số lần retry: chờ, rồi chạy lại.
    - **Spark mã 2:** xem mục [DQ critical](#ripe-dq-critical).
 4. Sau khi sửa: **Clear** task trong Airflow, hoặc chạy backfill cho các giờ bị lỡ.
@@ -72,7 +80,13 @@ Các lệnh dưới đây chạy từ thư mục gốc repo. Trên Git Bash (Win
 <a id="ripe-dq-critical"></a>
 ### Kiểm tra chất lượng critical thất bại (critical)
 
-- Partition **đã bị chặn công bố**; bản công bố trước đó vẫn được giữ nguyên.
+- Partition **đã bị chặn công bố**. Bản công bố trước đó vẫn được giữ nguyên: `snapshot_id` trong
+  `ops.partition_status` vẫn trỏ tới snapshot cũ, Gold tiếp tục dựng từ bản đó (cột `reason` của Gold ghi chú lại).
+  Xem bản đang được dùng:
+  ```sql
+  SELECT table_name, ictrl_dt, measurement_id, status, snapshot_id, reason
+  FROM nessie.ops.partition_status WHERE status IN ('blocked', 'blocked_upstream') ORDER BY ictrl_dt DESC;
+  ```
 - Xem chi tiết:
   ```sql
   SELECT checked_at, table_name, partition_scope, check_name, observed_value, details

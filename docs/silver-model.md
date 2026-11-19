@@ -195,8 +195,12 @@ Thứ tự ưu tiên, deterministic: `fetched_at` mới nhất → `stored_ts` m
 ## 6. Chất lượng dữ liệu và chặn công bố
 
 - Kiểm tra chạy **trước khi ghi**, trên chính DataFrame sắp được ghi.
-- Có lỗi `critical`: **không ghi** fact; partition được đánh dấu `blocked` trong `ops.partition_status`, và bản đã công bố trước đó được giữ nguyên.
+- Có lỗi `critical`: **không ghi** fact; `status` của partition thành `blocked` trong `ops.partition_status`.
 - Chỉ có lỗi `warn`: vẫn ghi, đánh dấu `published_with_warnings`.
-- Sau khi ghi, đếm lại dòng của partition; nếu lệch thì đánh dấu `blocked` và ghi hướng dẫn rollback.
+- Sau khi ghi, đếm lại dòng của partition; nếu lệch thì đánh dấu `blocked` và **không** công bố snapshot vừa ghi.
+- **Bản công bố trước được giữ nguyên.** Trong `ops.partition_status`, cột `status` là kết quả của lần chạy gần nhất,
+  còn `snapshot_id` và `row_count` luôn là của bản công bố gần nhất. Lần chạy bị chặn không xoá hai cột này,
+  nên Gold tiếp tục đọc được snapshot cũ (Iceberg time travel) và dashboard không mất dữ liệu.
+  `snapshot_id` NULL nghĩa là partition chưa từng được công bố.
 - Danh sách rule: `quality/dq/`. Kết quả lưu vào `ops.dq_result`; Data Docs của GX ở `artifacts/gx/`.
 - **Mất gói nặng không phải lỗi dữ liệu.** Result `all_lost` là kết quả đo hợp lệ và được giữ nguyên. Chỉ vi phạm hợp đồng dữ liệu mới bị coi là lỗi, ví dụ `rcvd > sent` hoặc trùng khóa.

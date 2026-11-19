@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import queue
+import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -63,10 +66,36 @@ class IngestContext:
     run_type: str = "scheduled"  # scheduled | backfill | manual
     http_factory: Callable[[], Any] | None = None
     now: Callable[[], datetime] = field(default=lambda: datetime.now(timezone.utc))
+    _idle_clients: queue.SimpleQueue = field(default_factory=queue.SimpleQueue, repr=False)
+    _all_clients: list = field(default_factory=list, repr=False)
+    _clients_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def http(self) -> Any:
-        # Mỗi worker một session riêng: requests.Session không đảm bảo thread-safe.
-        return self.http_factory() if self.http_factory else AtlasHttp(self.http_settings)
+    @contextmanager
+    def http(self) -> Iterator[Any]:
+        """Mượn một HTTP client cho một luồng, trả lại khi xong.
+
+        requests.Session không đảm bảo thread-safe, nên mỗi luồng dùng một client riêng; client được tái sử dụng
+        giữa các cửa sổ và nhóm probe (số session = số luồng đồng thời, không phải số request), giữ kết nối TLS.
+        """
+        try:
+            client = self._idle_clients.get_nowait()
+        except queue.Empty:
+            client = self.http_factory() if self.http_factory else AtlasHttp(self.http_settings)
+            with self._clients_lock:
+                self._all_clients.append(client)
+        try:
+            yield client
+        finally:
+            self._idle_clients.put(client)
+
+    def close(self) -> None:
+        """Đóng mọi HTTP client đã tạo (gọi một lần khi lệnh kết thúc)."""
+        with self._clients_lock:
+            clients, self._all_clients = self._all_clients, []
+        for client in clients:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
 
     def manifest_header(self, entity: str, load_id: str | None, objects: list[str], started_at: datetime) -> dict[str, Any]:
         """Các trường chung của mọi manifest (results và metadata)."""
@@ -105,7 +134,8 @@ def load_prior_index(store: StagingStore, spec: MeasurementSpec, window: Window)
 
 def fetch_chunk(ctx: IngestContext, spec: MeasurementSpec, window: Window, probe_ids: list[int]) -> tuple[list[bytes], ResponseInfo]:
     params = {**window.api_params(), "probe_ids": ",".join(map(str, probe_ids)), "public_only": "true", "format": "txt"}
-    body, info = ctx.http().get_bytes(f"measurements/{spec.measurement_id}/results/", params)
+    with ctx.http() as http:
+        body, info = http.get_bytes(f"measurements/{spec.measurement_id}/results/", params)
     return split_lines(body), info
 
 
@@ -233,10 +263,10 @@ def stage_metadata(
 def run_measurement_metadata(ctx: IngestContext, measurement_ids: list[int]) -> dict[str, Any]:
     """Snapshot metadata measurement. raw_json = nguyên bytes body của GET /measurements/{id}/."""
     started_at = ctx.now()
-    http = ctx.http()
+    with ctx.http() as http:
+        responses = [http.get_json(f"measurements/{msm}/", {"format": "json"}) for msm in measurement_ids]
     records, requests_meta = [], []
-    for i, msm in enumerate(measurement_ids):
-        obj, body, info = http.get_json(f"measurements/{msm}/", {"format": "json"})
+    for i, (msm, (obj, body, info)) in enumerate(zip(measurement_ids, responses, strict=True)):
         if not isinstance(obj, dict) or obj.get("id") != msm:
             raise ValueError(f"Unexpected metadata payload for measurement {msm}")
         spec = MEASUREMENTS[msm]
@@ -261,7 +291,9 @@ def run_probe_metadata(ctx: IngestContext, probe_ids: list[int] | None = None, p
     records: list[dict[str, Any]] = []
     requests_meta: list[dict[str, Any]] = []
     found: set[int] = set()
-    for request_index, (requested, data, info) in enumerate(iter_probe_pages(ctx.http(), wanted, page_size)):
+    with ctx.http() as http:
+        pages = list(iter_probe_pages(http, wanted, page_size))
+    for request_index, (requested, data, info) in enumerate(pages):
         requests_meta.append({**info.as_dict(), "request_index": request_index, "returned": len(data["results"])})
         for probe in data["results"]:
             pid = probe.get("id") if isinstance(probe, dict) else None

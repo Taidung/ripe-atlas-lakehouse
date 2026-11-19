@@ -33,12 +33,15 @@ from lakehouse.common import (
     REPORT_ZONE,
     SQL_DIR,
     STAGING_ROOT,
+    add_run_type_arg,
     count_by,
+    days_for_range,
     glob_paths,
     log_event,
     new_run_id,
     parse_instant,
     path_exists,
+    report_today,
     run_sql_file,
     to_s3,
     to_s3a,
@@ -54,10 +57,16 @@ ROW_KINDS = ("read", "inserted", "already_present", "quarantined")
 
 
 # ---------------------------------------------------------------------------- manifest
-def manifest_globs(entity: str, start: datetime | None, end: datetime | None) -> list[str]:
-    """Glob manifest cần xét: theo từng giờ (giờ VN) với results, toàn bộ với metadata."""
+def manifest_globs(entity: str, start: datetime | None, end: datetime | None, lookback_days: int) -> list[str]:
+    """Glob manifest cần xét.
+
+    - results: từng giờ (giờ VN) trong [start, end).
+    - metadata: các ngày (giờ VN) trong [start, end) nếu có, ngược lại `lookback_days` ngày gần nhất tính tới hôm nay.
+      Không quét toàn bộ lịch sử: chi phí mỗi lần chạy không tăng theo số ngày đã ingest.
+    """
     if entity != RESULTS:
-        return [f"{STAGING_ROOT}/_manifests/{entity}/ictrl_dt=*/*.json"]
+        days = days_for_range(start, end) if start and end else [report_today() - timedelta(days=i) for i in range(lookback_days)]
+        return [f"{STAGING_ROOT}/_manifests/{entity}/ictrl_dt={d}/*.json" for d in sorted(days)]
     globs, cursor = [], start
     while cursor < end:
         local = cursor.astimezone(REPORT_ZONE)
@@ -81,9 +90,13 @@ def read_manifests(spark: SparkSession, globs: list[str]) -> list[dict]:
 def pending(spark: SparkSession, manifests: list[dict], reprocess: bool) -> list[dict]:
     if reprocess or not manifests:
         return manifests
+    # Lọc theo partition (entity, ictrl_dt) trước để Iceberg chỉ đọc vài file thay vì cả bảng nhật ký.
+    entities = sorted({m["entity"] for m in manifests})
+    days = sorted({m["ictrl_dt"] for m in manifests})
     loaded = {
         r.manifest_path
         for r in spark.table(MANIFEST_TABLE)
+        .filter(F.col("entity").isin(entities) & F.col("ictrl_dt").isin(days))
         .filter(F.col("bronze_status") == "loaded")
         .filter(F.col("manifest_path").isin([m["manifest_path"] for m in manifests]))
         .select("manifest_path")
@@ -266,6 +279,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end", type=parse_instant)
     parser.add_argument("--reprocess", action="store_true", help="Xử lý lại cả manifest đã loaded (vẫn idempotent)")
     parser.add_argument("--max-quarantine-ratio", type=float, default=0.05)
+    parser.add_argument(
+        "--lookback-days", type=int, default=3, help="metadata: số ngày manifest gần nhất được xét khi không có --start/--end (mặc định 3)"
+    )
+    add_run_type_arg(parser)
     args = parser.parse_args()
     if args.entity == RESULTS and not (args.start and args.end):
         parser.error("--start and --end are required for ping_result_raw")
@@ -277,12 +294,14 @@ def main() -> None:
     spark = SparkSession.builder.appName(f"bronze_ingest_{args.entity}").getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
     stage = "bronze_results" if args.entity == RESULTS else "bronze_metadata"
-    with job_metrics(stage) as m:
+    with job_metrics(stage, args.run_type) as m:
         try:
             run_sql_file(spark, SQL_DIR / "bronze.sql")
             entities = list(METADATA_ENTITIES) if args.entity == "metadata" else [args.entity]
             for entity in entities:
-                todo = pending(spark, read_manifests(spark, manifest_globs(entity, args.start, args.end)), args.reprocess)
+                todo = pending(
+                    spark, read_manifests(spark, manifest_globs(entity, args.start, args.end, args.lookback_days)), args.reprocess
+                )
                 if todo:
                     summary = process(spark, entity, todo, args.max_quarantine_ratio)
                 else:

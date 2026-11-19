@@ -17,7 +17,7 @@ from datetime import date
 
 from pyspark.sql import SparkSession
 
-from lakehouse.common import log_event, report_today
+from lakehouse.common import add_run_type_arg, log_event, report_today
 from lakehouse.metrics import job_metrics
 
 TABLES = [
@@ -40,12 +40,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--before", type=date.fromisoformat, help="Chỉ gộp partition ictrl_dt < ngày này (mặc định: hôm nay giờ VN)")
     parser.add_argument("--dry-run", action="store_true")
+    add_run_type_arg(parser)
     args = parser.parse_args()
     before = args.before or report_today()
 
     spark = SparkSession.builder.appName("maintenance").getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
-    with job_metrics("maintenance") as m:
+    with job_metrics("maintenance", args.run_type) as m:
         try:
             for table in TABLES:
                 full = f"nessie.{table}"

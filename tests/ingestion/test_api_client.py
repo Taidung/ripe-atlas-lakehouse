@@ -5,6 +5,7 @@ from email.utils import format_datetime
 import pytest
 import requests
 
+from ingestion import metrics
 from ingestion.api_client import AtlasHttp, AtlasHttpError, ResponseTooLarge, parse_retry_after, sanitized_url
 from ingestion.settings import HttpSettings
 
@@ -106,3 +107,33 @@ def test_parse_retry_after_http_date_and_garbage():
 def test_sanitized_url_redacts_api_key():
     url = sanitized_url("probes/", {"key": "secret", "page": 2})
     assert "secret" not in url and "page=2" in url
+
+
+# ---------------------------------------------------------------------------- metric theo kết quả cuối của request
+@pytest.mark.parametrize(
+    ("outcomes", "call", "expected_class"),
+    [
+        ([FakeResponse(404)], "get_bytes", "4xx"),
+        ([FakeResponse(body=b"x" * 64)], "too_large", "too_large"),
+        ([FakeResponse(body=b"not json")], "get_json", "invalid_body"),
+        ([FakeResponse(body=b'{"ok":1}')], "get_json", "2xx"),
+    ],
+)
+def test_every_request_outcome_is_counted_once(outcomes, call, expected_class):
+    metrics.reset()
+    overrides = {"max_response_bytes": 16} if call == "too_large" else {}
+    http, _ = client(outcomes, **overrides)
+    method = http.get_json if call == "get_json" else http.get_bytes
+    try:
+        method("probes/", {})
+    except AtlasHttpError:
+        pass
+    assert dict(metrics.HTTP_REQUESTS) == {("probes", expected_class): 1}
+
+
+def test_close_releases_session():
+    closed = []
+    session = FakeSession([])
+    session.close = lambda: closed.append(True)
+    AtlasHttp(HttpSettings(), session=session).close()
+    assert closed == [True]

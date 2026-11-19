@@ -124,6 +124,7 @@ def main(argv: list[str] | None = None) -> int:
             run_probe_metadata(ctx)
             ok = True
         finally:
+            ctx.close()
             url = os.environ.get("PUSHGATEWAY_URL")
             if url:
                 metrics.push_outcome(url, "metadata", "scheduled", ok, time.time())
@@ -136,7 +137,10 @@ def main(argv: list[str] | None = None) -> int:
         windows = incremental_windows(now, ctx.settings.overlap_hours)
     else:
         windows = hourly_windows(args.start, args.end)
-    return run_windows(ctx, parse_measurement_ids(args.measurements), windows)
+    try:
+        return run_windows(ctx, parse_measurement_ids(args.measurements), windows)
+    finally:
+        ctx.close()
 
 
 if __name__ == "__main__":  # cho phép chạy trực tiếp `python ingestion/cli.py`

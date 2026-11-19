@@ -100,12 +100,15 @@ class HourlyIngestionOperator(IngestionOperator):
 class SparkJobOperator(BaseOperator):
     template_fields: Sequence[str] = ("arguments",)
 
-    def __init__(self, *, script: str, arguments: list[str] | None = None, hourly_range: bool = False, **kwargs):
+    def __init__(
+        self, *, script: str, arguments: list[str] | None = None, hourly_range: bool = False, run_type: str = "scheduled", **kwargs
+    ):
+        """run_type: nhãn metric của job (scheduled | backfill | reconcile | repair | manual), xem lakehouse/common.py."""
         super().__init__(**kwargs)
-        self.script, self.arguments, self.hourly_range = script, arguments or [], hourly_range
+        self.script, self.arguments, self.hourly_range, self.run_type = script, arguments or [], hourly_range, run_type
 
     def execute(self, context):
-        args = list(self.arguments)
+        args = [*self.arguments, "--run-type", self.run_type]
         if self.hourly_range:
             start, end = window_bounds(context)
             args += ["--start", start, "--end", end]

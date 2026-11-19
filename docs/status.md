@@ -306,6 +306,34 @@ Không đổi hành vi. Kiểm chứng (2026-11-19):
   - `gold_crosscheck` **PASS**, sai số percentile lớn nhất 0,93%.
 - CI GitHub run 44529234412 (commit `aeb3546`): **success**. Cả `lint-and-unit` (đã có luật E501) và `spark-tests` đều pass.
 
+## Phiên 2026-11-19: Sửa 10 lỗi từ code review
+
+| # | Lỗi | Sửa |
+|---|---|---|
+| 1 | Silver bị chặn ghi đè dòng `published` thành `blocked` với `snapshot_id = NULL`, làm mất bản công bố | `set_partition_status` giữ `snapshot_id`/`row_count` khi status bị chặn; `status` là kết quả lần chạy gần nhất. Kiểm tra sau ghi sai cũng không công bố snapshot vừa ghi |
+| 2 | Gold ghi đè mart rỗng khi không measurement nào được công bố | Gold đọc các measurement có snapshot công bố (`readable_measurements`); không có thì không ghi, đánh dấu `blocked_upstream` |
+| 3 | Metric Spark luôn gắn `run_type=scheduled` | Mọi job Spark nhận `--run-type`; grouping key Pushgateway có `run_type`; Airflow truyền `reconcile`/`backfill` |
+| 4 | 4xx, body quá lớn, JSON hỏng không vào metric | Mỗi request logic ghi đúng một mẫu với kết quả cuối: `2xx/4xx/5xx/network_error/too_large/invalid_body` |
+| 5 | Coverage tính cho probe set không được ingest (completeness giả rất thấp) | Cohort chỉ tính cho (measurement, giờ) mà probe set đó có manifest đã nạp; probe set không ingest trong ngày không có dòng Gold |
+| 6 | Check `coverage_full_hour_grid` sai với probe set thiếu IPv6 | Lưới coverage luôn đủ 4 measurement mỗi cohort, `expected_probes = 0` cho af không có probe |
+| 7 | Nhánh blocked/empty không `unpersist` | `build_day` của Silver và Gold giải phóng cache trong `finally` |
+| 8 | `gold_crosscheck` crash khi full outer join ra `None` | In `-` cho giá trị thiếu và báo MISMATCH; cùng quy tắc cohort với Gold |
+| 9 | Bronze metadata quét mọi manifest; `coverage_inputs` quét cả `ingest_manifest` | Metadata chỉ xét `--lookback-days` (mặc định 3) ngày; truy vấn `ingest_manifest` lọc theo partition (entity, ictrl_dt) |
+| 10 | Mỗi nhóm probe tạo một `requests.Session` không đóng | `IngestContext.http()` cho mượn client theo luồng, tái sử dụng giữa các cửa sổ; `close()` khi lệnh kết thúc |
+
+Thay đổi số liệu (đúng ý đồ): sau lỗi 5, Gold ngày 2026-11-19 có `quality_hourly_target` 41 dòng thay vì 74.
+Cohort `strat-k2-c100-v1` chỉ được ingest 4 (measurement, giờ) trong ngày, nhưng trước đây hiện "có dữ liệu" ở 37 giờ
+nhờ các probe trùng với `dev-200-v1`. Hiện số dòng Gold theo cohort khớp đúng số (measurement, giờ) đã ingest (37 và 4).
+
+Kiểm chứng:
+- ruff sạch; unit test ingestion 48/48 (thêm 6 test cho lỗi 4 và 10); test Spark 36/36 (thêm 2 test cho lỗi 5 và 6).
+- Chạy thật trên `main`: Bronze metadata, Silver, Gold, `gold_crosscheck` **PASS** (sai số percentile lớn nhất 0,96%).
+- `tests/integration/dq_block_on_branch.sh` (mở rộng cho lỗi 1 và 2), chạy trên nhánh Nessie tạm: **PASS**.
+  - Silver bị chặn, `snapshot_id` công bố trước và sau bằng nhau.
+  - Gold dựng lại từ bản cũ, đủ 41 dòng như `main`.
+  - Ngày không có Silver: Gold không tạo commit mới.
+- Chưa làm: xoá các group Pushgateway cũ không có `run_type` (lệnh trong `docs/runbook.md`).
+
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
 | Tiêu chí | Trạng thái |

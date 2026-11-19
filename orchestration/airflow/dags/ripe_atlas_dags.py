@@ -119,12 +119,25 @@ with DAG(
         arguments=["--entity", "ping_result_raw", *rng],
         pool=WRITER,
         execution_timeout=timedelta(minutes=45),
+        run_type="reconcile",
     )
     r_silver = SparkJobOperator(
-        task_id="silver", script="silver_build.py", arguments=rng, pool=WRITER, execution_timeout=timedelta(minutes=60), retries=1
+        task_id="silver",
+        script="silver_build.py",
+        arguments=rng,
+        pool=WRITER,
+        execution_timeout=timedelta(minutes=60),
+        retries=1,
+        run_type="reconcile",
     )
     r_gold = SparkJobOperator(
-        task_id="gold", script="gold_build.py", arguments=rng, pool=WRITER, execution_timeout=timedelta(minutes=60), retries=1
+        task_id="gold",
+        script="gold_build.py",
+        arguments=rng,
+        pool=WRITER,
+        execution_timeout=timedelta(minutes=60),
+        retries=1,
+        run_type="reconcile",
     )
     r_ingest >> r_bronze >> r_silver >> r_gold
 
@@ -156,11 +169,14 @@ with DAG(
         arguments=["--entity", "ping_result_raw", *b_rng],
         pool=WRITER,
         execution_timeout=timedelta(hours=2),
+        run_type="backfill",
     )
     b_silver = SparkJobOperator(
-        task_id="silver", script="silver_build.py", arguments=b_rng, pool=WRITER, execution_timeout=timedelta(hours=3)
+        task_id="silver", script="silver_build.py", arguments=b_rng, pool=WRITER, execution_timeout=timedelta(hours=3), run_type="backfill"
     )
-    b_gold = SparkJobOperator(task_id="gold", script="gold_build.py", arguments=b_rng, pool=WRITER, execution_timeout=timedelta(hours=3))
+    b_gold = SparkJobOperator(
+        task_id="gold", script="gold_build.py", arguments=b_rng, pool=WRITER, execution_timeout=timedelta(hours=3), run_type="backfill"
+    )
     b_ingest >> b_bronze >> b_silver >> b_gold
 
 with DAG(

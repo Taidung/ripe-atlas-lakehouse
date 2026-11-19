@@ -167,6 +167,53 @@ def test_marts_are_mutually_consistent(spark):
     assert c[(1004, H1)].data_state == "not_processed" and cov.count() == 24 * 4
 
 
+def empty_coverage_inputs(spark):
+    processed = spark.createDataFrame(
+        [], "probe_set_version string, measurement_id int, event_hour_utc timestamp, manifests long, overlap_unchanged_skipped long"
+    )
+    status = spark.createDataFrame([(date(2026, 11, 19), 1001, "published")], "ictrl_dt date, measurement_id int, silver_status string")
+    quarantine = spark.createDataFrame([], "measurement_id int, event_hour_utc timestamp, quarantine_records long")
+    return processed, status, quarantine
+
+
+def test_coverage_grid_is_full_for_probe_set_without_ipv6(spark):
+    """Probe set chỉ có IPv4 vẫn có đủ 24 giờ × 4 measurement; measurement IPv6 có expected_probes = 0."""
+    members = members_df(spark, probes_v6=())
+    cohort = gold.cohort_results(facts_df(spark, ROWS), members)
+    cov = gold.coverage(spark, date(2026, 11, 19), cohort, members, {1001: 240}, *empty_coverage_inputs(spark))
+    assert cov.count() == 24 * 4
+    rows = {(r.measurement_id, r.event_hour_utc): r for r in cov.collect()}
+    assert rows[(2001, H1)].expected_probes == 0 and rows[(2001, H1)].expected_results == 0
+    eligible = cohort.filter("is_eligible and af = 4 and valid_rtt_count = 0")  # không reply -> histogram rỗng vẫn khớp
+    checks = gold_consistency_checks(
+        target=gold.quality_target(eligible),
+        country=gold.quality_country(eligible),
+        asn=gold.quality_asn(eligible),
+        probe=gold.quality_probe(eligible),
+        hist=gold.rtt_histogram(spark.createDataFrame([], "result_id string, rtt_ms double, is_valid_rtt boolean"), eligible),
+        cov=cov,
+        pairs=gold.paired(eligible),
+    )
+    grid = next(c for c in checks if c["check_name"] == "gold:coverage_full_hour_grid")
+    assert grid["success"], grid
+
+
+def test_cohort_counts_only_hours_its_probe_set_was_ingested(spark):
+    """Probe 1 thuộc cả hai cohort, nhưng cohort-b không được ingest giờ H1 -> kết quả H1 chỉ tính cho cohort-a."""
+    members = members_df(spark, version="cohort-a").unionByName(members_df(spark, probes_v4=(1,), probes_v6=(), version="cohort-b"))
+    ingested = spark.createDataFrame(
+        [("cohort-a", 1001, H1), ("cohort-a", 1001, H2), ("cohort-b", 1001, H2)],
+        "probe_set_version string, measurement_id int, event_hour_utc timestamp",
+    )
+    cohort = gold.cohort_results(facts_df(spark, ROWS), members, ingested)
+    by_cohort_hour = {
+        (r.probe_set_version, r.event_hour_utc): r["count"] for r in cohort.groupBy("probe_set_version", "event_hour_utc").count().collect()
+    }
+    assert (("cohort-b", H1) in by_cohort_hour) is False
+    assert by_cohort_hour[("cohort-b", H2)] == 1  # kết quả "e" của probe 1
+    assert by_cohort_hour[("cohort-a", H1)] == 4
+
+
 def test_histogram_percentile_error_is_small():
     rng = random.Random(42)
     values = [rng.lognormvariate(math.log(40), 0.8) for _ in range(20000)] + [0.0] * 50

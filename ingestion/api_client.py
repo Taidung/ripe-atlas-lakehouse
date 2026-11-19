@@ -108,11 +108,29 @@ class AtlasHttp:
             return min(retry_after, cap)
         return self._rng() * min(cap, self.settings.backoff_base_s * 2 ** (attempt - 1))
 
+    def close(self) -> None:
+        """Đóng session (trả socket về hệ điều hành)."""
+        self.session.close()
+
     def get_bytes(self, path: str, params: dict[str, Any]) -> tuple[bytes, ResponseInfo]:
         """GET và đọc toàn bộ body (giới hạn kích thước). Retry toàn bộ request khi stream bị ngắt."""
+        body, info, _ = self._fetch(path, params)
+        return body, info
+
+    def get_json(self, path: str, params: dict[str, Any]) -> tuple[Any, bytes, ResponseInfo]:
+        body, info, parsed = self._fetch(path, params, decode=json.loads)
+        return parsed, body, info
+
+    def _fetch(self, path: str, params: dict[str, Any], decode: Callable[[bytes], Any] | None = None) -> tuple[bytes, ResponseInfo, Any]:
+        """Một request logic (kể cả các lần retry). Ghi ĐÚNG MỘT mẫu metric cho mỗi request, với kết quả cuối cùng:
+        2xx, 4xx, 5xx, network_error, too_large (body vượt giới hạn) hoặc invalid_body (không parse được)."""
         url = sanitized_url(path, params)
         retry_statuses: list[str] = []
         started = time.monotonic()
+
+        def elapsed() -> float:
+            return round(time.monotonic() - started, 3)
+
         for attempt in range(1, self.settings.max_attempts + 1):
             retry_after = None
             try:
@@ -124,7 +142,18 @@ class AtlasHttp:
                 ) as response:
                     status = response.status_code
                     if status == 200:
-                        body = self._read_capped(response, url)
+                        try:
+                            body = self._read_capped(response, url)
+                        except ResponseTooLarge:
+                            record_http(path, status, elapsed(), retry_statuses, outcome="too_large")
+                            raise
+                        parsed = None
+                        if decode is not None:
+                            try:
+                                parsed = decode(body)
+                            except ValueError as exc:
+                                record_http(path, status, elapsed(), retry_statuses, len(body), outcome="invalid_body")
+                                raise AtlasHttpError(f"Invalid body from {url}", status=status, url=url, retryable=False) from exc
                         info = ResponseInfo(
                             url=url,
                             params=sanitize_params(params),
@@ -133,36 +162,31 @@ class AtlasHttp:
                             bytes=len(body),
                             body_sha256=hashlib.sha256(body).hexdigest(),
                             fetched_at=datetime.now(timezone.utc).isoformat(),
-                            duration_s=round(time.monotonic() - started, 3),
+                            duration_s=elapsed(),
                             retry_statuses=retry_statuses,
                         )
                         log_event("ingest", "http_ok", url=url, attempts=attempt, bytes=len(body), duration_s=info.duration_s)
                         record_http(path, status, info.duration_s, retry_statuses, len(body))
-                        return body, info
+                        return body, info, parsed
                     if status == 429 or status >= 500:
                         retry_after = parse_retry_after(response.headers.get("Retry-After"))
                         retry_statuses.append(str(status))
                         error = AtlasHttpError(f"HTTP {status} for {url}", status=status, url=url, retryable=True)
                     else:
+                        log_event("ingest", "http_failed", url=url, attempts=attempt, status=status, retry_statuses=retry_statuses)
+                        record_http(path, status, elapsed(), retry_statuses)
                         raise AtlasHttpError(f"HTTP {status} for {url}", status=status, url=url, retryable=False)
             except RETRYABLE_EXCEPTIONS as exc:
                 retry_statuses.append(type(exc).__name__)
                 error = AtlasHttpError(f"{type(exc).__name__} for {url}: {exc}", status=None, url=url, retryable=True)
             if attempt == self.settings.max_attempts:
                 log_event("ingest", "http_failed", url=url, attempts=attempt, retry_statuses=retry_statuses)
-                record_http(path, error.status, round(time.monotonic() - started, 3), retry_statuses[:-1])
+                record_http(path, error.status, elapsed(), retry_statuses[:-1])
                 raise error
             delay = self.backoff_delay(attempt, retry_after)
             log_event("ingest", "http_retry", url=url, attempt=attempt, reason=retry_statuses[-1], delay_s=round(delay, 2))
             self._sleep(delay)
         raise AssertionError("unreachable")
-
-    def get_json(self, path: str, params: dict[str, Any]) -> tuple[Any, bytes, ResponseInfo]:
-        body, info = self.get_bytes(path, params)
-        try:
-            return json.loads(body), body, info
-        except ValueError as exc:
-            raise AtlasHttpError(f"Invalid JSON from {info.url}", status=200, url=info.url, retryable=False) from exc
 
     def _read_capped(self, response: requests.Response, url: str) -> bytes:
         limit = self.settings.max_response_bytes

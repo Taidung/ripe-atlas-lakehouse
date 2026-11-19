@@ -8,7 +8,8 @@
 Luồng:
   1. Dimension SCD2 (dim_probe, dim_measurement) build lại toàn bộ từ snapshot Bronze; kiểm tra; ghi.
   2. Với mỗi ngày (ictrl_dt, giờ VN) bị ảnh hưởng: tính lại TOÀN BỘ fact của ngày đó từ Bronze (cả 4 measurement).
-  3. Kiểm tra GX + đối soát. Lỗi critical -> không ghi, partition = blocked, giữ bản công bố cũ.
+  3. Kiểm tra GX + đối soát. Lỗi critical -> không ghi, partition = blocked; snapshot đã công bố trước đó
+     vẫn giữ trong ops.partition_status nên Gold tiếp tục đọc được bản cũ.
   4. Ghi overwrite theo partition (ictrl_dt, measurement_id) -> kiểm tra sau ghi -> cập nhật ops.partition_status.
 Mã thoát 2 khi có ngày bị chặn vì lỗi chất lượng critical. Đặc tả: docs/silver-model.md.
 """
@@ -29,6 +30,7 @@ from dq.recorder import DqRecorder
 from dq.results import CRITICAL, failed_names, has_critical_failure, has_warning, make_check
 from lakehouse.common import (
     SQL_DIR,
+    add_run_type_arg,
     count_by_measurement,
     days_for_range,
     log_event,
@@ -98,16 +100,31 @@ def build_dimensions(spark: SparkSession, dq: DqRecorder) -> tuple[DataFrame, Da
 
 # ---------------------------------------------------------------------------- 2-4. một ngày
 def build_day(spark: SparkSession, day: date, probe_dim: DataFrame, msm_dim: DataFrame, run_id: str, dq: DqRecorder) -> str:
+    cached: list[DataFrame] = []
+    try:
+        return _build_day(spark, day, probe_dim, msm_dim, run_id, dq, cached)
+    finally:  # mọi nhánh (empty, blocked, published) đều giải phóng cache, tránh dồn bộ nhớ driver khi backfill nhiều ngày
+        for df in cached:
+            df.unpersist()
+
+
+def _build_day(
+    spark: SparkSession, day: date, probe_dim: DataFrame, msm_dim: DataFrame, run_id: str, dq: DqRecorder, cached: list[DataFrame]
+) -> str:
+    def cache(df: DataFrame) -> DataFrame:
+        cached.append(df.cache())
+        return cached[-1]
+
     loaded_at = datetime.now(timezone.utc)
-    bronze = spark.table(BRONZE_RESULTS).filter(F.col("ictrl_dt") == F.lit(day)).cache()
+    bronze = cache(spark.table(BRONZE_RESULTS).filter(F.col("ictrl_dt") == F.lit(day)))
     if bronze.limit(1).count() == 0:
         log_event("silver", "day_empty", ictrl_dt=str(day))
         return "empty"
 
     # Tính fact + reply cho cả ngày
-    facts = asof_join(build_fact_result(select_result_versions(bronze), run_id, loaded_at), probe_dim, msm_dim).cache()
-    replies = build_fact_reply(facts).cache()
-    fact_out = facts.select(*table_columns(spark, FACT)).cache()
+    facts = cache(asof_join(build_fact_result(select_result_versions(bronze), run_id, loaded_at), probe_dim, msm_dim))
+    replies = cache(build_fact_reply(facts))
+    fact_out = cache(facts.select(*table_columns(spark, FACT)))
     reply_out = replies.select(*table_columns(spark, REPLY))
 
     # Kiểm tra trước khi ghi
@@ -123,10 +140,11 @@ def build_day(spark: SparkSession, day: date, probe_dim: DataFrame, msm_dim: Dat
         dq.write("silver", REPLY, scope, checks_reply, None)
         failed = failed_names(all_checks, CRITICAL)
         reason = "critical: " + "; ".join(failed)[:900]
+        # row_count/snapshot_id = None: MERGE giữ nguyên bản đã công bố trước đó (nếu có).
         rows = [
-            PartitionStatus("silver", t, day, m, "blocked", n, run_id, dq.dq_run_id, None, reason, now)
+            PartitionStatus("silver", t, day, m, "blocked", None, run_id, dq.dq_run_id, None, reason, now)
             for t in (FACT, REPLY)
-            for m, n in fact_counts.items()
+            for m in fact_counts
         ]
         set_partition_status(spark, rows)
         log_event("silver", "day_blocked", ictrl_dt=str(day), failed=failed)
@@ -149,14 +167,16 @@ def build_day(spark: SparkSession, day: date, probe_dim: DataFrame, msm_dim: Dat
     dq.write("silver", FACT, scope, checks_fact + checks_reconcile + post_write, fact_snapshot)
     dq.write("silver", REPLY, scope, checks_reply, reply_snapshot)
 
-    # Công bố
+    # Công bố. Nếu kiểm tra sau ghi sai, bản vừa ghi KHÔNG được công bố: Gold vẫn đọc snapshot công bố trước đó.
+    reply_counts = count_by_measurement(reply_out)
     if not post_write[0]["success"]:
-        status, reason = "blocked", "post-write count mismatch; rollback with CALL nessie.system.rollback_to_snapshot"
+        status, reason = "blocked", f"post-write count mismatch at snapshot {fact_snapshot}; not published"
+        fact_snapshot = reply_snapshot = None
+        fact_counts = reply_counts = dict.fromkeys(fact_counts)
     elif has_warning(all_checks):
         status, reason = "published_with_warnings", "; ".join(failed_names(all_checks))[:900]
     else:
         status, reason = "published", None
-    reply_counts = count_by_measurement(reply_out)
     rows = [
         PartitionStatus("silver", table, day, m, status, n, run_id, dq.dq_run_id, snapshot, reason, now)
         for table, counts, snapshot in ((FACT, fact_counts, fact_snapshot), (REPLY, reply_counts, reply_snapshot))
@@ -173,8 +193,6 @@ def build_day(spark: SparkSession, day: date, probe_dim: DataFrame, msm_dim: Dat
         fact_snapshot=fact_snapshot,
         reply_snapshot=reply_snapshot,
     )
-    for df in (bronze, facts, replies, fact_out):
-        df.unpersist()
     return status
 
 
@@ -205,6 +223,7 @@ def parse_args() -> argparse.Namespace:
     group.add_argument("--repair-unknown", action="store_true")
     group.add_argument("--dims-only", action="store_true")
     parser.add_argument("--end", type=parse_instant)
+    add_run_type_arg(parser)
     args = parser.parse_args()
     if args.start and not args.end:
         parser.error("--end is required with --start")
@@ -242,7 +261,7 @@ def main() -> int:
     spark = SparkSession.builder.appName("silver_build").getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
     run_id = new_run_id("silver")
-    with job_metrics("silver") as m:
+    with job_metrics("silver", args.run_type) as m:
         try:
             run_sql_file(spark, SQL_DIR / "silver.sql")
             run_sql_file(spark, SQL_DIR / "ops.sql")

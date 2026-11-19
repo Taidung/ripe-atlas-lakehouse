@@ -182,3 +182,24 @@ def test_cleanup_finds_only_unreferenced_old_objects(tmp_path, results_1001, mon
     assert run_cleanup(ctx.store, 0, apply=False, now=later) and ctx.store.fs.exists(orphan)  # dry-run không xóa
     run_cleanup(ctx.store, 0, apply=True, now=later)
     assert not ctx.store.fs.exists(orphan) and ctx.store.fs.exists(referenced)
+
+
+def test_http_clients_are_reused_per_thread_and_closed(tmp_path, results_1001):
+    """Số client tạo ra bị chặn bởi số luồng, không tăng theo số nhóm probe / cửa sổ; close() đóng hết."""
+    created, closed = [], []
+
+    class CountingAtlas(FakeAtlas):
+        def close(self):
+            closed.append(self)
+
+    def factory():
+        created.append(CountingAtlas(results_1001))
+        return created[-1]
+
+    ctx = make_ctx(tmp_path, FakeAtlas(results_1001), "run-pool", chunk_size=1)
+    ctx.http_factory = factory
+    for _ in range(3):  # 3 lần chạy, mỗi lần nhiều nhóm probe (chunk_size=1)
+        run_results_window(ctx, 1001, W13)
+    assert 1 <= len(created) <= ctx.http_settings.concurrency
+    ctx.close()
+    assert sorted(map(id, closed)) == sorted(map(id, created))

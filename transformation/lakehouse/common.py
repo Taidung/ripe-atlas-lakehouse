@@ -54,6 +54,16 @@ def report_today() -> date:
     return datetime.now(REPORT_ZONE).date()
 
 
+# ---------------------------------------------------------------------------- tham số dòng lệnh
+# Loại lần chạy, gắn vào nhãn metric. Alert "job lỗi liên tiếp" chỉ xét run_type=scheduled, nên backfill hay
+# chạy tay không che mất (hoặc gây ra) cảnh báo của lịch chạy chính.
+RUN_TYPES = ("scheduled", "backfill", "reconcile", "repair", "manual")
+
+
+def add_run_type_arg(parser) -> None:
+    parser.add_argument("--run-type", choices=RUN_TYPES, default="manual", help="Loại lần chạy cho nhãn metric (mặc định: manual)")
+
+
 # ---------------------------------------------------------------------------- log, run id
 def new_run_id(prefix: str) -> str:
     return f"{prefix}-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"

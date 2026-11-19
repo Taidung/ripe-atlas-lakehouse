@@ -13,13 +13,18 @@ Một result của Silver chỉ được tính vào Gold khi thỏa **tất cả
 
 | Điều kiện | Lý do | Bản ghi bị loại được đếm ở |
 |---|---|---|
-| Partition Silver có trạng thái `published` hoặc `published_with_warnings` | Không dùng dữ liệu bị chặn vì lỗi chất lượng | `coverage_hourly.silver_status` |
+| Partition Silver đã có bản công bố (`snapshot_id` khác NULL); Gold đọc đúng snapshot đó | Không dùng dữ liệu bị chặn vì lỗi chất lượng. Nếu lần chạy Silver gần nhất bị chặn, Gold dùng bản công bố trước đó | `coverage_hourly.silver_status` |
 | `public_status = 'public'` theo phiên bản probe as-of | Chính sách chỉ phân tích probe công khai | `results_excluded_not_public` |
 | `clock_suspect = false` | `event_ts` do đồng hồ probe ghi; nếu lệch thì xếp sai giờ | `results_excluded_clock` |
 | `probe_id` thuộc probe set của cohort (xem dưới) | Tái lập được kết quả theo tập mẫu | Không áp dụng |
 
 **Cohort (`probe_set_version`):**
-- Mỗi dòng Gold thuộc **một** probe set. Một result được tính vào cohort S nếu `probe_id ∈ S.probes_af`. Probe nằm trong hai set sẽ có mặt ở cả hai cohort.
+- Mỗi dòng Gold thuộc **một** probe set. Một result được tính vào cohort S nếu `probe_id ∈ S.probes_af` **và** probe set S
+  đã thực sự được ingest cho (measurement, giờ) đó, tức có manifest đã nạp vào Bronze. Probe nằm trong hai set sẽ có mặt ở cả
+  hai cohort, nhưng chỉ ở những giờ mà set đó được ingest. Probe set không được ingest trong ngày không có dòng nào
+  trong Gold, kể cả `coverage_hourly`, nên không sinh cảnh báo độ đầy đủ giả.
+- `coverage_hourly` luôn đủ 24 giờ × 4 measurement cho mỗi cohort có mặt; probe set không có probe IPv6 vẫn có dòng
+  cho 2001/2004 với `expected_probes = 0`.
 - Vì vậy dashboard **bắt buộc chọn đúng một** `probe_set_version`. Filter dạng single-select, mặc định `strat-k2-c100-v1`.
 
 **Thời gian:**
