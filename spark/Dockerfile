@@ -5,9 +5,19 @@ FROM tabulario/spark-iceberg@sha256:790a72e744e0d09f161e1b4c7c2f79625cc598cf0476
 # Jar đặt ở /opt/spark/extra-jars và nạp qua spark.jars (user classpath), KHÔNG chép vào
 # /opt/spark/jars: image đã có Jackson 2.15.2, đặt Jackson 2.12 cạnh nó sẽ gây xung đột.
 # Danh sách và SHA-256 lấy từ đúng bộ jar Ivy đã resolve và chạy được ở giai đoạn 1.
+# Tải từ Maven Central, nếu lỗi thì thử mirror Maven Central của Google. SHA-256 được pin nên bytes nhận về đúng
+# như nhau bất kể nguồn. (CI 2026-11-19: runner GitHub nhận lỗi HTTP từ repo1.maven.org, curl exit 22, trong khi
+# máy local tải bình thường; --retry mặc định không retry lỗi 4xx nên thêm --retry-all-errors.)
 ARG MAVEN=https://repo1.maven.org/maven2
+ARG MAVEN_MIRROR=https://maven-central.storage-download.googleapis.com/maven2
 RUN set -eu; mkdir -p /opt/spark/extra-jars; cd /opt/spark/extra-jars; \
-  fetch() { curl -fsSL --retry 5 --retry-delay 3 -o "$(basename "$1")" "$MAVEN/$1"; echo "$2  $(basename "$1")" | sha256sum -c -; }; \
+  fetch() { \
+    f="$(basename "$1")"; \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o "$f" "$MAVEN/$1" \
+      || { echo "primary failed: $MAVEN/$1, trying mirror" >&2; curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o "$f" "$MAVEN_MIRROR/$1"; } \
+      || { echo "FAILED to download $1 from both sources" >&2; exit 1; }; \
+    echo "$2  $f" | sha256sum -c -; \
+  }; \
   fetch org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar 53f9ae03c681a30a50aa17524bd9790ab596b28481858e54efd989a826ed3a4a; \
   fetch com/amazonaws/aws-java-sdk-core/1.12.262/aws-java-sdk-core-1.12.262.jar 06fed99f929c389e168278c1b111aaf1afb270d07202fbbce92e73d1e4279678; \
   fetch com/amazonaws/aws-java-sdk-s3/1.12.262/aws-java-sdk-s3-1.12.262.jar a0cb7580178bc0d4d3558295a5bb890008478da8a6b3241989c71238b0ed3be5; \
