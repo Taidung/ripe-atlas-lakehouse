@@ -19,6 +19,8 @@ services:
       - ./sql:/opt/app/sql:ro
       - ./tests:/opt/app/tests:ro
       - ./config:/opt/app/config:ro
+      # Kết quả GX (validation results, Data Docs HTML); không commit.
+      - ./artifacts:/opt/app/artifacts
     networks:
       - lakehouse
     depends_on:

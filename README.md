@@ -108,6 +108,38 @@ docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_ing
 
 Hợp đồng dữ liệu, quy tắc quarantine và cách phục hồi: `docs/data-contracts.md`.
 
+### Bronze → Silver (star schema + kiểm tra chất lượng)
+
+```bash
+# Tính lại các ngày (giờ VN) chứa khoảng [start, end). Chạy lại an toàn: kết quả giống hệt
+docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/silver_build.py --start 2026-11-19T00:00:00Z --end 2026-11-19T03:00:00Z
+
+# Tính lại các ngày chỉ định
+docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/silver_build.py --dates 2026-11-19
+
+# Metadata probe đến muộn: tính lại các ngày có fact probe_sk = -1 nay đã có metadata
+docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/silver_build.py --repair-unknown
+```
+
+Mã thoát `2` nghĩa là có ngày bị chặn vì lỗi chất lượng critical. Khi đó partition giữ bản đã công bố trước đó.
+
+Xem trạng thái công bố và kết quả kiểm tra:
+
+```bash
+docker compose exec trino trino --execute "SELECT table_name, ictrl_dt, measurement_id, status, row_count, reason FROM nessie.ops.partition_status ORDER BY 1,2,3"
+docker compose exec trino trino --execute "SELECT checked_at, table_name, severity, check_name, observed_value FROM nessie.ops.dq_result WHERE NOT success ORDER BY checked_at DESC LIMIT 20"
+```
+
+Data Docs của GX: mở file `artifacts/gx/gx/uncommitted/data_docs/local_site/index.html` trên máy host.
+
+Mô hình, data dictionary và quy tắc chuẩn hóa: `docs/silver-model.md`.
+
+Integration test chặn công bố, chạy trên nhánh Nessie tạm, không làm bẩn `main`:
+
+```bash
+bash scripts/test_dq_block_on_branch.sh 2026-11-19
+```
+
 ### Test
 
 ```bash
@@ -122,7 +154,7 @@ docker compose exec -T -w /opt/app spark-iceberg python -m pytest -q -p no:cache
 
 ### Pipeline cũ (legacy, giữ để đối chiếu)
 
-`spark/jobs/staging_to_bronze.py` và `spark/jobs/bronze_to_silver.py` vẫn chạy được với các bảng `bronze.ping_results`, `silver.fact_ping`. Chúng sẽ được thay ở giai đoạn 3.
+`spark/jobs/staging_to_bronze.py` và `spark/jobs/bronze_to_silver.py` (SCD1) đọc `bronze.ping_results`, ghi `silver.legacy_*`. Đã được thay bằng `bronze_ingest.py` và `silver_build.py`.
 
 ```bash
 docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_to_silver.py

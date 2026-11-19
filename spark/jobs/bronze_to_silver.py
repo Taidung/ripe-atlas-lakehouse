@@ -1,3 +1,4 @@
+"""LEGACY (SCD1): ghi vào silver.legacy_*; được thay bởi silver_build.py ở giai đoạn 3. Giữ để đối chiếu."""
 import argparse
 from datetime import datetime, timedelta
 
@@ -78,8 +79,8 @@ def load_dimensions(spark: SparkSession):
         rows = transform(spark.table(f"{BRONZE}.{name}"))
         if not rows.head(1) or rows.filter(col(key).isNull() | col("source_load_id").isNull()).head(1):
             raise ValueError(f"Invalid {name} metadata")
-        rows.writeTo(f"{SILVER}.dim_{name[:-1]}").using("iceberg").createOrReplace()
-        print(f"Loaded {SILVER}.dim_{name[:-1]}")
+        rows.writeTo(f"{SILVER}.legacy_dim_{name[:-1]}").using("iceberg").createOrReplace()
+        print(f"Loaded {SILVER}.legacy_dim_{name[:-1]}")
 
 
 def load_fact(spark: SparkSession, window_start: datetime):
@@ -92,10 +93,10 @@ def load_fact(spark: SparkSession, window_start: datetime):
     rows = ping_fact(spark.table(f"{BRONZE}.ping_results").filter((col("window_date") == day) & (col("window_hour") == hour)))
     if not rows.head(1) or rows.filter(col("event_epoch").isNull() | col("packets_sent").isNull() | col("packets_received").isNull()).head(1):
         raise ValueError(f"Invalid ping facts for {window_start.isoformat()}")
-    for key, dim in (("measurement_id", "dim_measurement"), ("probe_id", "dim_probe")):
+    for key, dim in (("measurement_id", "legacy_dim_measurement"), ("probe_id", "legacy_dim_probe")):
         if rows.select(key).distinct().join(spark.table(f"{SILVER}.{dim}").select(key), key, "left_anti").head(1):
             raise ValueError(f"Missing {dim} rows for {window_start.isoformat()}")
-    table = f"{SILVER}.fact_ping"
+    table = f"{SILVER}.legacy_fact_ping"
     if spark.catalog.tableExists(table):
         rows.writeTo(table).overwritePartitions()
     else:

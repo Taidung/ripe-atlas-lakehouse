@@ -27,6 +27,15 @@ def spark():
 
 
 @pytest.fixture(scope="session")
+def real_cases():
+    cases = {}
+    for line in (ROOT / "tests" / "fixtures" / "ping_results_real_sample.jsonl").read_text(encoding="utf-8").splitlines():
+        item = json.loads(line)
+        cases[item["case"]] = item["record"]
+    return cases
+
+
+@pytest.fixture(scope="session")
 def unique_results():
     seen, out = set(), []
     for line in (ROOT / "tests" / "fixtures" / "ping_results_real_sample.jsonl").read_text(encoding="utf-8").splitlines():

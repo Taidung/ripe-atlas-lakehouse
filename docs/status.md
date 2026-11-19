@@ -108,15 +108,56 @@
 
 ### Còn thiếu hoặc rủi ro
 
-- **Chưa chạy thật với `strat-k2-c100-v1`** (≈ 4.600 probe). Volume/giờ và runtime của chế độ analysis chưa đo.
+- ~~Chưa chạy thật với `strat-k2-c100-v1`~~: đã đo ở giai đoạn 3.
 - **Compaction, expire snapshot, dọn object mồ côi và retention staging:** mới là kế hoạch (`docs/data-contracts.md` §5).
 - **Lock giữa các run cùng cửa sổ:** chưa có. Trùng lặp được khử ở Bronze; Airflow sẽ giới hạn `max_active_runs`.
 - **Late data quá 3 giờ:** max đo được 2,25 giờ. Reconciliation định kỳ bằng `backfill` cần được lên lịch (giai đoạn 5 với Airflow).
 - **Bảng legacy** (`bronze.ping_results`, `silver.fact_ping`, …) vẫn còn; cần chủ đồ án đồng ý mới xóa.
 
-### Bước tiếp theo: giai đoạn 3 (Silver + GX)
+### Bước tiếp theo sau giai đoạn 2
 
-1. ERD và data dictionary; `fact_ping_result`, `fact_ping_reply`, `dim_probe`/`dim_measurement` SCD2, `dim_date`/`dim_time`, dimension geography/ASN.
-2. Chọn bản ghi khi cùng business key mà payload khác; xử lý RTT `-1`, `sent = 0`, duplicate reply.
-3. GX Core: suite cho Bronze/Silver, chặn publish khi có lỗi critical.
-4. Đo chế độ analysis trên 1–2 giờ dữ liệu thật.
+Đã thực hiện ở giai đoạn 3, xem phần dưới.
+
+## Phiên 2026-11-19: Giai đoạn 3 (Silver star schema + GX)
+
+### Đã làm, có bằng chứng
+
+- **Thiết kế:** `docs/silver-model.md` gồm ERD Mermaid, data dictionary, căn cứ ngữ nghĩa đo trên 44.340 result thật, quy tắc chọn bản ghi khi nguồn sửa, SCD2 và as-of join.
+- **Bảng mới:**
+  - `silver.fact_ping_result`, `silver.fact_ping_reply`: partition `(ictrl_dt, measurement_id)`.
+  - `silver.dim_probe`, `silver.dim_measurement`: SCD2, có unknown member `-1`.
+  - `silver.dim_date`, `silver.dim_time`.
+  - `ops.dq_result`, `ops.partition_status`.
+- **Code:** `spark/lakehouse/silver.py`, `spark/lakehouse/quality.py`, `spark/jobs/silver_build.py`. GX Core 1.25.0 chạy Checkpoint và lưu Data Docs vào `artifacts/gx/`.
+- **Test:** 25 test Spark pass (10 test Silver mới), gồm:
+  - SCD2 với snapshot trùng, thuộc tính quay về giá trị cũ, và kiểm tra chồng lấn.
+  - As-of join ở đúng mốc ranh giới, probe chưa có metadata, không nhân bản dòng.
+  - Mốc nửa đêm GMT+7, chọn bản ghi khi nguồn sửa, đối soát reply.
+  - GX phát hiện lỗi critical.
+- **Chạy thật** (dev + strat, ngày 2026-11-19 theo giờ VN):
+  - 260.442 result và 790.353 reply. Silver khớp Bronze theo từng measurement; mọi kiểm tra đối soát đạt.
+  - **Idempotent:** chạy 2 lần cùng input cho checksum nội dung giống hệt (result 44.340 dòng, reply 133.125 dòng).
+  - **Metadata đến muộn:** ingest 216.102 result của tập strat trước khi có metadata → 208.276 result có `probe_sk = -1`. Sau khi ingest metadata, `--repair-unknown` đưa số này về 0, số dòng không đổi.
+  - **Chặn công bố khi có lỗi critical:** `scripts/test_dq_block_on_branch.sh` chạy trên nhánh Nessie tạm. Kết quả: exit 2, trạng thái `blocked`, snapshot fact giữ nguyên, `main` không bị ảnh hưởng.
+  - **Đo chế độ analysis:** 216.102 result/giờ; staging 29,3 MB/giờ (≈ 0,70 GB/ngày). Ingestion 2 phút 28 giây/giờ, Bronze 47 giây, Silver cho cả ngày khoảng 2,5 phút.
+- **Phát hiện từ dữ liệu:**
+  - Đồng hồ probe lệch: 712/44.340 result từ 3 probe có `stored_ts < event_ts` (tới −7.725 s). Đã thêm cột `clock_suspect`.
+  - Một reply có RTT 68,9 s (cảnh báo).
+  - Một probe đổi `asn_v6`/`prefix_v6` giữa hai snapshot; SCD2 ghi nhận đúng thành 2 phiên bản.
+
+### Thay đổi tên hoặc đường dẫn
+
+- `silver.dim_probe`, `silver.dim_measurement`, `silver.fact_ping` (SCD1 cũ) được **đổi tên** thành `silver.legacy_*`. Không xóa dữ liệu; job legacy ghi vào tên mới.
+
+### Còn thiếu hoặc rủi ro
+
+- **Chưa có tên quốc gia/vùng hay tên ASN:** cần chủ đồ án duyệt nguồn tham chiếu trước khi tải.
+- **Chạy hằng giờ ở chế độ analysis tốn thời gian:** mỗi lần tính lại cả ngày, và ingestion mỗi lần chạy phải tải 4 cửa sổ (≈ 10 phút). Cần đo lại khi đủ 24 giờ dữ liệu.
+- **Ingestion chưa bắt buộc probe set khớp với metadata:** cần chạy `metadata` với cùng probe set trước, hoặc dựa vào `--repair-unknown`.
+- Compaction, dọn snapshot và retention: vẫn là kế hoạch.
+
+### Bước tiếp theo: giai đoạn 4 (Gold, Trino, Superset)
+
+1. Metric dictionary trước khi xây marts.
+2. Các Gold mart: theo giờ × measurement/af; theo quốc gia; theo ASN; theo probe; so sánh IPv4/IPv6 theo paired cohort; coverage. Lưu sẵn tử số/mẫu số và sketch để tính percentile gộp được.
+3. Dashboard Superset "Global Network Quality" (provisioning tái lập được).
