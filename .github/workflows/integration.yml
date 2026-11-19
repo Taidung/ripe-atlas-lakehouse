@@ -40,27 +40,27 @@ jobs:
           docker compose --profile analytics --profile monitoring --profile jobs build
           docker compose --profile analytics --profile monitoring up -d --wait
       - name: Smoke Spark -> Nessie -> Trino
-        run: bash scripts/smoke_compat.sh
+        run: bash tests/integration/smoke_compat.sh
       - name: Pipeline 1 giờ (dev-200-v1) -> Bronze -> Silver -> Gold
         run: |
           END=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:00:00Z); START=$(date -u -d '2 hours ago' +%Y-%m-%dT%H:00:00Z)
           docker compose --profile jobs run --rm -T ingestion metadata
           docker compose --profile jobs run --rm -T ingestion results --start "$START" --end "$END"
-          docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_ingest.py --entity metadata
-          docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_ingest.py --entity ping_result_raw --start "$START" --end "$END"
-          docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/silver_build.py --start "$START" --end "$END"
-          docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/gold_build.py --start "$START" --end "$END"
+          docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/bronze_ingest.py --entity metadata
+          docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/bronze_ingest.py --entity ping_result_raw --start "$START" --end "$END"
+          docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/silver_build.py --start "$START" --end "$END"
+          docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/gold_build.py --start "$START" --end "$END"
           DAY=$(TZ=Asia/Ho_Chi_Minh date -d "$START" +%Y-%m-%d)
-          docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/crosscheck_gold.py --date "$DAY"
+          docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/gold_crosscheck.py --date "$DAY"
       - name: Rerun cùng input -> 0 dòng mới (idempotency)
         run: |
           END=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:00:00Z); START=$(date -u -d '2 hours ago' +%Y-%m-%dT%H:00:00Z)
-          docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_ingest.py --entity ping_result_raw --start "$START" --end "$END" --reprocess 2>&1 | tee bronze_rerun.log
+          docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/bronze_ingest.py --entity ping_result_raw --start "$START" --end "$END" --reprocess 2>&1 | tee bronze_rerun.log
           grep -q '"rows_inserted": 0' bronze_rerun.log
       - name: Chặn công bố khi lỗi critical (nhánh Nessie tạm)
         run: |
           DAY=$(TZ=Asia/Ho_Chi_Minh date -d "2 hours ago" +%Y-%m-%d)
-          bash scripts/test_dq_block_on_branch.sh "$DAY"
+          bash tests/integration/dq_block_on_branch.sh "$DAY"
       - name: Superset dashboard + kiểm tra filter
         run: |
           docker compose exec -T superset /app/.venv/bin/python /app/project/provision.py

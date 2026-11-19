@@ -18,7 +18,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/unit"]
+testpaths = ["tests/ingestion"]
 pythonpath = ["."]
 markers = [
     "live: gọi RIPE Atlas API thật (chạy riêng, không chạy trong PR checks)",
@@ -37,4 +37,4 @@ select = ["E", "F", "W", "I", "B", "UP"]
 ignore = ["E501", "B008", "UP017"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["ingestion", "lakehouse", "ripe_atlas", "provision"]
+known-first-party = ["ingestion", "lakehouse", "dq", "ripe_atlas", "provision", "tests"]

@@ -79,7 +79,7 @@ Các lệnh dưới đây chạy từ thư mục gốc repo. Trên Git Bash (Win
   FROM nessie.ops.dq_result WHERE NOT success AND severity = 'critical' ORDER BY checked_at DESC;
   ```
 - Mở Data Docs của GX: `artifacts/gx/gx/uncommitted/data_docs/local_site/index.html`.
-- Có thể tái hiện an toàn trên một nhánh Nessie, xem `scripts/test_dq_block_on_branch.sh`.
+- Có thể tái hiện an toàn trên một nhánh Nessie, xem `tests/integration/dq_block_on_branch.sh`.
 - Sửa nguồn (logic hoặc dữ liệu), rồi chạy lại `silver_build.py --dates <ngày>`.
 
 <a id="ripe-disk-almost-full"></a>
@@ -111,7 +111,7 @@ RAM theo container (cAdvisor không dùng được trên Docker Desktop + contai
 docker stats --no-stream
 ```
 
-Trino bị chiếm tài nguyên quá lâu: giới hạn truy vấn đã có trong `trino/config.properties`. Nếu vẫn treo thì khởi động lại; Trino không giữ state:
+Trino bị chiếm tài nguyên quá lâu: giới hạn truy vấn đã có trong `serving/trino/config.properties`. Nếu vẫn treo thì khởi động lại; Trino không giữ state:
 
 ```bash
 docker compose --profile analytics restart trino
@@ -133,7 +133,7 @@ SELECT reason, count(*) FROM nessie.bronze.quarantine WHERE reprocess_status = '
 Sửa logic, rồi chạy lại:
 
 ```bash
-docker compose exec spark-iceberg spark-submit /opt/app/spark/jobs/bronze_ingest.py --entity ping_result_raw --start … --end … --reprocess
+docker compose exec spark-iceberg spark-submit /opt/app/transformation/jobs/bronze_ingest.py --entity ping_result_raw --start … --end … --reprocess
 ```
 
 ## Log
@@ -155,7 +155,7 @@ docker compose exec airflow bash -c "grep -rh '\"run_id\": \"<run_id>\"' /opt/ai
 | Dữ liệu | Retention | Cơ chế |
 |---|---|---|
 | Staging (object, manifest, index) | Giữ để replay | Chỉ tự động xóa **object mồ côi** > 48 giờ (`python -m ingestion cleanup --apply`) |
-| Iceberg (Bronze/Silver/Gold/ops) | Giữ | Compaction hằng ngày (`maintenance.py`) |
+| Iceberg (Bronze/Silver/Gold/ops) | Giữ | Compaction hằng ngày (`iceberg_maintenance.py`) |
 | Prometheus | 15 ngày hoặc 2 GB | Cờ `--storage.tsdb.retention.*` |
 | Log container | 50 MB/service | json-file rotation |
 | Log task Airflow | 14 ngày | DAG maintenance |

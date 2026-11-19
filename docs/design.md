@@ -46,7 +46,7 @@ flowchart LR
 
 - **Nessie và OpenMetadata:** Nessie là *catalog kỹ thuật*. Nó giữ con trỏ tới metadata file mới nhất của mỗi bảng Iceberg, với commit và branch. Đây là điều kiện để Spark và Trino thấy cùng một snapshot. OpenMetadata là *catalog nghiệp vụ*: mô tả, owner, tag, glossary, chất lượng và lineage. Nó không tham gia đường ghi dữ liệu.
 - **Bucket** (giữ nguyên như repo): `staging` chứa dữ liệu thô dlt, manifest và artifact vận hành; `warehouse` chứa dữ liệu và metadata Iceberg. Tên bucket cấu hình qua `STAGING_BUCKET`, `WAREHOUSE_BUCKET`.
-- **Phân quyền S3** (đã có trong `seaweedfs/s3.json` của repo, giữ nguyên):
+- **Phân quyền S3** (đã có trong `storage/seaweedfs/s3.json` của repo, giữ nguyên):
 
   | Identity | Quyền |
   |---|---|

@@ -2,8 +2,8 @@
 
 Phiên bản: v1 (giai đoạn 4, 2026-11-19). Viết **trước** khi xây marts.
 Code tương ứng:
-- `spark/lakehouse/gold.py` (biến đổi)
-- `spark/jobs/gold_build.py` (job)
+- `transformation/lakehouse/gold.py` (biến đổi)
+- `transformation/jobs/gold_build.py` (job)
 - `sql/gold/001_tables.sql` (DDL)
 - `superset/` (dashboard)
 
@@ -100,7 +100,7 @@ Ký hiệu:
 
 ## 5. Kiểm chứng
 
-- Unit test (`tests/spark/test_gold.py`):
+- Unit test (`tests/transformation/test_gold.py`):
   - Công thức loss/mean/tỷ lệ phản hồi, khi mẫu số = 0, và rollup giờ → ngày bằng tính trực tiếp.
   - Percentile từ histogram so với giá trị chính xác.
   - Ghép cặp: mutual nearest, ngưỡng 120 s, phía thiếu.

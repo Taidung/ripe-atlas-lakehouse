@@ -2,10 +2,10 @@
 
 Phiên bản: v1 (giai đoạn 3, 2026-11-19).
 Code tương ứng:
-- `spark/lakehouse/silver.py` (biến đổi)
-- `spark/lakehouse/quality.py` (kiểm tra chất lượng)
-- `spark/jobs/silver_build.py` (job)
-- `sql/silver/001_tables.sql` và `sql/ops/001_tables.sql` (DDL)
+- `transformation/lakehouse/silver.py` (biến đổi)
+- `quality/dq/` (kiểm tra chất lượng)
+- `transformation/jobs/silver_build.py` (job)
+- `transformation/sql/silver.sql` và `transformation/sql/ops.sql` (DDL)
 
 ## 1. ERD
 
@@ -198,5 +198,5 @@ Thứ tự ưu tiên, deterministic: `fetched_at` mới nhất → `stored_ts` m
 - Có lỗi `critical`: **không ghi** fact; partition được đánh dấu `blocked` trong `ops.partition_status`, và bản đã công bố trước đó được giữ nguyên.
 - Chỉ có lỗi `warn`: vẫn ghi, đánh dấu `published_with_warnings`.
 - Sau khi ghi, đếm lại dòng của partition; nếu lệch thì đánh dấu `blocked` và ghi hướng dẫn rollback.
-- Danh sách rule: `spark/lakehouse/quality.py`. Kết quả lưu vào `ops.dq_result`; Data Docs của GX ở `artifacts/gx/`.
+- Danh sách rule: `quality/dq/`. Kết quả lưu vào `ops.dq_result`; Data Docs của GX ở `artifacts/gx/`.
 - **Mất gói nặng không phải lỗi dữ liệu.** Result `all_lost` là kết quả đo hợp lệ và được giữ nguyên. Chỉ vi phạm hợp đồng dữ liệu mới bị coi là lỗi, ví dụ `rcvd > sent` hoặc trùng khóa.

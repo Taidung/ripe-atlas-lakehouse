@@ -17,6 +17,44 @@ Tài liệu:
 - Phiên bản đã kiểm chứng: `docs/compatibility.md`
 - Trạng thái và bước tiếp theo: `docs/status.md`
 
+## Bản đồ mã nguồn
+
+Mã nguồn chia theo thành phần của data platform, theo đúng chiều dữ liệu chảy qua.
+Mỗi thư mục có `README.md` riêng, liệt kê từng file và vai trò của nó.
+
+```text
+RIPE Atlas API
+   │  ingestion/        dlt + HTTP client: API -> jsonl.gz + manifest           (Python, container `ingestion`)
+   ▼
+storage/                SeaweedFS (bucket staging, warehouse) + Nessie catalog  (cấu hình S3: storage/seaweedfs/s3.json)
+   │  transformation/   Spark/Iceberg: staging -> Bronze -> Silver -> Gold      (job: jobs/, thư viện: lakehouse/, DDL: sql/)
+   │  quality/          package `dq`: GX suite, kiểm tra SCD2/đối soát/nhất quán, ghi ops.dq_result
+   ▼
+serving/                Trino (SQL) + Superset (dashboard dựng bằng code)
+orchestration/          Airflow DAG: chạy ingestion và job Spark theo giờ / backfill
+observability/          Pushgateway + Prometheus + Grafana (dashboard và cảnh báo)
+governance/             OpenMetadata: catalog, mô tả, glossary, lineage
+config/                 dùng chung: probe_sets/*.json, metrics.json (Gold, Superset, OpenMetadata đọc cùng file)
+tests/                  chia theo thành phần: ingestion/, transformation/, quality/, contract/, integration/
+docs/                   thiết kế, data contract, runbook, báo cáo kiểm thử, ADR
+```
+
+Tìm nhanh:
+
+| Muốn tìm | Mở |
+|---|---|
+| Gọi API, retry, phân trang | `ingestion/api_client.py` |
+| Ghi staging, manifest, khử trùng | `ingestion/staging_store.py`, `ingestion/result_records.py` |
+| Logic Bronze / Silver (SCD2, as-of join) / Gold | `transformation/lakehouse/{bronze,silver,gold}.py` |
+| Entry point của từng job Spark | `transformation/jobs/*.py` |
+| Giao thức công bố partition | `transformation/lakehouse/publication.py` |
+| Rule chất lượng dữ liệu | `quality/dq/gx_suites.py`, `quality/dq/checks.py` |
+| Định nghĩa metric | `config/metrics.json`, `docs/metric-dictionary.md` |
+| Dashboard Superset | `serving/superset/provision.py` |
+| Lịch chạy | `orchestration/airflow/dags/ripe_atlas_dags.py` |
+| Cảnh báo | `observability/grafana/provisioning/alerting/rules.yaml` |
+| Service, cổng, volume | `docker-compose.yaml` |
+
 ## 1. Chuẩn bị
 
 Cần Docker Desktop (đã kiểm thử với Docker 29.6.2, Compose v5.3.1), Git Bash và [uv](https://docs.astral.sh/uv/) cho phần ingestion.
@@ -59,7 +97,7 @@ docker compose --profile all down
 
 ```bash
 docker compose --profile analytics up -d
-bash scripts/smoke_compat.sh
+bash tests/integration/smoke_compat.sh
 ```
 
 Script kiểm tra 3 điều:
@@ -99,11 +137,11 @@ Chạy lại cùng cửa sổ là an toàn. Record trùng nội dung (cùng SHA-
 Staging → Bronze. Job chỉ đọc object có trong manifest hoàn tất, và bỏ qua manifest đã nạp:
 
 ```bash
-docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_ingest.py --entity metadata
-docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_ingest.py --entity ping_result_raw --start 2026-11-19T00:00:00Z --end 2026-11-19T02:00:00Z
+docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/bronze_ingest.py --entity metadata
+docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/bronze_ingest.py --entity ping_result_raw --start 2026-11-19T00:00:00Z --end 2026-11-19T02:00:00Z
 
 # Xử lý lại manifest đã nạp (idempotent: 0 dòng mới nếu dữ liệu không đổi)
-docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_ingest.py --entity ping_result_raw --start 2026-11-19T00:00:00Z --end 2026-11-19T02:00:00Z --reprocess
+docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/bronze_ingest.py --entity ping_result_raw --start 2026-11-19T00:00:00Z --end 2026-11-19T02:00:00Z --reprocess
 ```
 
 Hợp đồng dữ liệu, quy tắc quarantine và cách phục hồi: `docs/data-contracts.md`.
@@ -112,13 +150,13 @@ Hợp đồng dữ liệu, quy tắc quarantine và cách phục hồi: `docs/da
 
 ```bash
 # Tính lại các ngày (giờ VN) chứa khoảng [start, end). Chạy lại an toàn: kết quả giống hệt
-docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/silver_build.py --start 2026-11-19T00:00:00Z --end 2026-11-19T03:00:00Z
+docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/silver_build.py --start 2026-11-19T00:00:00Z --end 2026-11-19T03:00:00Z
 
 # Tính lại các ngày chỉ định
-docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/silver_build.py --dates 2026-11-19
+docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/silver_build.py --dates 2026-11-19
 
 # Metadata probe đến muộn: tính lại các ngày có fact probe_sk = -1 nay đã có metadata
-docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/silver_build.py --repair-unknown
+docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/silver_build.py --repair-unknown
 ```
 
 Mã thoát `2` nghĩa là có ngày bị chặn vì lỗi chất lượng critical. Khi đó partition giữ bản đã công bố trước đó.
@@ -137,17 +175,17 @@ Mô hình, data dictionary và quy tắc chuẩn hóa: `docs/silver-model.md`.
 Integration test chặn công bố, chạy trên nhánh Nessie tạm, không làm bẩn `main`:
 
 ```bash
-bash scripts/test_dq_block_on_branch.sh 2026-11-19
+bash tests/integration/dq_block_on_branch.sh 2026-11-19
 ```
 
 ### Silver → Gold
 
 ```bash
 # Tính lại mọi Gold mart cho các ngày chỉ định (chỉ đọc partition Silver đã công bố)
-docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/gold_build.py --dates 2026-11-19
+docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/gold_build.py --dates 2026-11-19
 
 # Kiểm chứng độc lập Gold so với Silver, và sai số percentile so với giá trị chính xác
-docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/crosscheck_gold.py --date 2026-11-19
+docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/gold_crosscheck.py --date 2026-11-19
 ```
 
 Định nghĩa metric và các mart: `docs/metric-dictionary.md`.
@@ -156,7 +194,7 @@ docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/crosscheck
 
 ```bash
 docker compose --profile analytics up -d
-# Tạo hoặc cập nhật dataset, chart, dashboard từ code; chạy thử truy vấn của mọi chart; xuất ZIP vào superset/export/
+# Tạo hoặc cập nhật dataset, chart, dashboard từ code; chạy thử truy vấn của mọi chart; xuất ZIP vào serving/superset/export/
 docker compose exec -T superset /app/.venv/bin/python /app/project/provision.py
 # Kiểm tra tổ hợp filter, rollup giờ → ngày, timezone qua chính API của Superset
 docker compose exec -T -w /app/project superset /app/.venv/bin/python verify_filters.py
@@ -176,21 +214,21 @@ docker compose exec -T superset superset import-dashboards -p /app/project/expor
 
 ```bash
 # Unit test offline (không cần mạng hay Docker; dlt ghi thật vào thư mục tạm)
-docker compose --profile jobs run --rm --entrypoint python ingestion -m pytest -q tests/unit
+docker compose --profile jobs run --rm --entrypoint python ingestion -m pytest -q tests/ingestion
 
-# Test biến đổi Bronze trên Spark local trong container
-docker compose exec -T -w /opt/app spark-iceberg python -m pytest -q -p no:cacheprovider tests/spark
+# Test transformation (Bronze/Silver/Gold) và quality (GX, SCD2, đối soát) trên Spark local trong container
+docker compose exec -T -w /opt/app spark-iceberg python -m pytest -q -p no:cacheprovider tests/transformation tests/quality
 ```
 
 > Trên Git Bash (Windows), thêm `MSYS_NO_PATHCONV=1` trước các lệnh `docker compose exec` có đường dẫn `/opt/...`. Nếu không, Git Bash tự đổi đường dẫn thành `C:/Program Files/Git/opt/...`.
 
 ### Pipeline cũ (legacy, giữ để đối chiếu)
 
-`spark/jobs/staging_to_bronze.py` và `spark/jobs/bronze_to_silver.py` (SCD1) đọc `bronze.ping_results`, ghi `silver.legacy_*`. Đã được thay bằng `bronze_ingest.py` và `silver_build.py`.
+`transformation/legacy/staging_to_bronze.py` và `transformation/legacy/bronze_to_silver.py` (SCD1) đọc `bronze.ping_results`, ghi `silver.legacy_*`. Đã được thay bằng `bronze_ingest.py` và `silver_build.py`.
 
 ```bash
-docker compose exec -T spark-iceberg spark-submit /opt/app/spark/jobs/bronze_to_silver.py
-docker compose exec -T -w /opt/app spark-iceberg spark-submit tests/test_bronze.py
+docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/legacy/bronze_to_silver.py
+docker compose exec -T -w /opt/app/transformation/legacy spark-iceberg python -m unittest test_staging_to_bronze test_bronze_to_silver
 ```
 
 ## 5. Truy vấn bằng SQL client qua Trino
@@ -204,7 +242,7 @@ Thông số kết nối, dùng được với DBeaver, DataGrip hay Trino CLI:
 | Catalog | `nessie` |
 | User | tên bất kỳ (môi trường đồ án chưa bật xác thực Trino) |
 
-Trino dùng credentials S3 chỉ đọc nên **không ghi được** dữ liệu. Mỗi truy vấn bị giới hạn 5 phút và 1 GB bộ nhớ (`trino/config.properties`).
+Trino dùng credentials S3 chỉ đọc nên **không ghi được** dữ liệu. Mỗi truy vấn bị giới hạn 5 phút và 1 GB bộ nhớ (`serving/trino/config.properties`).
 
 Truy vấn mẫu cho Gold và drill-down Silver: `docs/sql-examples.md`.
 
@@ -242,7 +280,7 @@ docker compose --profile monitoring up -d
 Mỗi cảnh báo có runbook riêng trong `docs/runbook.md`. Dashboard được sinh từ code:
 
 ```bash
-python monitoring/grafana/build_dashboard.py
+python observability/grafana/build_dashboard.py
 ```
 
 ## 8. Governance (OpenMetadata)
@@ -269,7 +307,7 @@ Mở http://localhost:8585.
 Chạy lint và test tại máy giống CI:
 
 ```bash
-uv run --frozen ruff check ingestion tests spark superset airflow monitoring governance
+uv run --frozen ruff check ingestion transformation quality serving orchestration observability governance tests
 uv run --frozen pytest -q
 ```
 

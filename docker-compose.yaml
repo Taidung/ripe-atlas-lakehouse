@@ -10,8 +10,8 @@ services:
   spark-iceberg:
     logging: *default-logging
     # Spark 3.5.5 / Scala 2.12.18 / Java 17.0.14 / Iceberg 1.8.1 (đã đo trong container, xem docs/compatibility.md).
-    # Build từ spark/Dockerfile: base tabulario/spark-iceberg pin digest + jar S3A nhúng sẵn.
-    build: ./spark
+    # Build từ transformation/Dockerfile: base tabulario/spark-iceberg pin digest + jar S3A nhúng sẵn.
+    build: ./transformation
     image: ripe-atlas-spark:3.5.5-iceberg1.8.1
     restart: unless-stopped
     ports:
@@ -23,14 +23,15 @@ services:
       AWS_REGION: us-east-1
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-http://pushgateway:9091}
     volumes:
-      - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
-      # Mã nguồn mount chỉ đọc: job ở /opt/app/spark/jobs, package dùng chung ở /opt/app/spark/lakehouse.
-      - ./spark:/opt/app/spark:ro
-      - ./sql:/opt/app/sql:ro
+      - ./transformation/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      # Mã nguồn mount chỉ đọc (PYTHONPATH trong image trỏ tới hai thư mục này):
+      #   transformation/: job Spark (jobs/), package lakehouse/, DDL (sql/)
+      #   quality/:        package dq/ (GX suite, kiểm tra SCD2/đối soát, ghi ops.dq_result)
+      - ./transformation:/opt/app/transformation:ro
+      - ./quality:/opt/app/quality:ro
       - ./tests:/opt/app/tests:ro
+      # probe set + metrics.json (định nghĩa metric dùng chung Gold/Superset/OpenMetadata)
       - ./config:/opt/app/config:ro
-      # metrics.json dùng chung với Superset provisioning (test Gold đọc cùng định nghĩa).
-      - ./superset:/opt/app/superset:ro
       # Kết quả GX (validation results, Data Docs HTML); không commit.
       - ./artifacts:/opt/app/artifacts
     networks:
@@ -188,7 +189,7 @@ services:
       - -config=/etc/seaweedfs/s3.json
     env_file: .env
     volumes:
-      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+      - ./storage/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8333/status"]
       interval: 10s
@@ -268,8 +269,8 @@ services:
       S3_SERVING_ACCESS_KEY: ${S3_SERVING_ACCESS_KEY:?Set S3_SERVING_ACCESS_KEY in .env}
       S3_SERVING_SECRET_KEY: ${S3_SERVING_SECRET_KEY:?Set S3_SERVING_SECRET_KEY in .env}
     volumes:
-      - ./trino/catalog:/etc/trino/catalog:ro
-      - ./trino/config.properties:/etc/trino/config.properties:ro
+      - ./serving/trino/catalog:/etc/trino/catalog:ro
+      - ./serving/trino/config.properties:/etc/trino/config.properties:ro
     mem_limit: 3g
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/v1/info"]
@@ -306,7 +307,7 @@ services:
 
   superset-init:
     logging: *default-logging
-    build: ./superset
+    build: ./serving/superset
     image: ripe-atlas-superset:6.1.0
     profiles: ["analytics", "all"]
     command: ["sh", "/app/docker/superset-init.sh"]
@@ -317,10 +318,11 @@ services:
       SUPERSET_DB_PASSWORD: ${SUPERSET_DB_PASSWORD:?Set SUPERSET_DB_PASSWORD in .env}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?Set SUPERSET_ADMIN_PASSWORD in .env}
     volumes: &superset_volumes
-      - ./superset/superset_config.py:/app/docker/superset_config.py:ro
-      - ./superset/superset-init.sh:/app/docker/superset-init.sh:ro
-      # Định nghĩa dashboard dạng code (provision.py, metrics.json, datasets/*.sql) và nơi xuất ZIP.
-      - ./superset:/app/project
+      - ./serving/superset/superset_config.py:/app/docker/superset_config.py:ro
+      - ./serving/superset/superset-init.sh:/app/docker/superset-init.sh:ro
+      # Định nghĩa dashboard dạng code (provision.py, datasets/*.sql) và nơi xuất ZIP.
+      - ./serving/superset:/app/project
+      - ./config/metrics.json:/app/config/metrics.json:ro
     depends_on:
       superset-db:
         condition: service_healthy
@@ -412,7 +414,7 @@ services:
     ports:
       - "8090:8080"
     volumes:
-      - ./airflow/dags:/opt/airflow/dags:ro
+      - ./orchestration/airflow/dags:/opt/airflow/dags:ro
       - airflow_logs:/opt/airflow/logs
       - /var/run/docker.sock:/var/run/docker.sock
     mem_limit: 2g
@@ -424,7 +426,7 @@ services:
 
   # ---------------------------------------------------------------- governance (OpenMetadata)
   # OM 2.0.8 không kèm Airflow riêng (PIPELINE_SERVICE_CLIENT_ENABLED=false); ingestion metadata chạy bằng container
-  # om-ingestion (openmetadata-ingestion 2.0.8.0) qua governance/run_ingestion.py.
+  # om-ingestion (openmetadata-ingestion 2.0.8.0) qua governance/openmetadata/run_ingestion.py.
   om-db:
     logging: *default-logging
     image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
@@ -516,7 +518,7 @@ services:
 
   om-ingestion:
     logging: *default-logging
-    build: ./governance
+    build: ./governance/openmetadata
     image: ripe-atlas-om-ingestion:2.0.8.0
     profiles: ["governance", "all"]
     command: ["python", "/app/governance/run_ingestion.py"]
@@ -524,8 +526,8 @@ services:
       OM_HOST: http://om-server:8585
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD}
     volumes:
-      - ./governance:/app/governance:ro
-      - ./superset/metrics.json:/app/superset/metrics.json:ro
+      - ./governance/openmetadata:/app/governance:ro
+      - ./config/metrics.json:/app/config/metrics.json:ro
     depends_on:
       om-server:
         condition: service_healthy
@@ -574,7 +576,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     mem_limit: 512m
     networks:
@@ -594,8 +596,8 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     mem_limit: 512m
     depends_on:

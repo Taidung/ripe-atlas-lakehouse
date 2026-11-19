@@ -1,8 +1,8 @@
 # Dashboard "Global Network Quality": đặc tả
 
 - Superset 6.1.0, slug `global-network-quality`.
-- Dashboard được dựng bằng code: `superset/provision.py` (idempotent), metric lấy từ `superset/metrics.json`, dataset ảo từ `superset/datasets/*.sql`.
-- Bản xuất để import: `superset/export/global_network_quality.zip`.
+- Dashboard được dựng bằng code: `serving/superset/provision.py` (idempotent), metric lấy từ `config/metrics.json`, dataset ảo từ `serving/superset/datasets/*.sql`.
+- Bản xuất để import: `serving/superset/export/global_network_quality.zip`.
 
 ## Dataset
 
@@ -18,7 +18,7 @@
 | `v_degraded_groups` (ảo) | `datasets/v_degraded_groups.sql` | Quốc gia/ASN suy giảm |
 
 - Cột thời gian chính: `event_hour_local`, là giờ Asia/Ho_Chi_Minh kiểu `timestamp` không múi giờ.
-- Biểu thức metric: `superset/metrics.json`. Định nghĩa: `docs/metric-dictionary.md`.
+- Biểu thức metric: `config/metrics.json`. Định nghĩa: `docs/metric-dictionary.md`.
 
 ## Chart
 

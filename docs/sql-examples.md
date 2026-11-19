@@ -2,7 +2,7 @@
 
 **Kết nối:** host `localhost`, port `8081`, catalog `nessie`, user tùy ý (môi trường đồ án chưa bật xác thực).
 - Trino dùng khóa S3 chỉ đọc, không ghi được dữ liệu.
-- Giới hạn mỗi truy vấn: 5 phút và 1 GB bộ nhớ (`trino/config.properties`).
+- Giới hạn mỗi truy vấn: 5 phút và 1 GB bộ nhớ (`serving/trino/config.properties`).
 
 Với mọi truy vấn Gold, **luôn lọc đúng một `probe_set_version`** và **tính tỷ lệ từ tổng**, không lấy trung bình các tỷ lệ.
 

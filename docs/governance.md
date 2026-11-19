@@ -23,15 +23,15 @@ docker compose --profile governance run --rm om-ingestion
 - Mở http://localhost:8585, đăng nhập `admin@open-metadata.org` / `admin`.
 - Tài khoản mặc định của OM chỉ dùng cho môi trường local; hãy đổi mật khẩu trong UI nếu chia sẻ máy.
 
-## Những gì được đưa vào (`governance/run_ingestion.py`)
+## Những gì được đưa vào (`governance/openmetadata/run_ingestion.py`)
 
 1. **Connector Trino** (service `trino_lakehouse`, catalog `nessie`): schema `bronze`, `silver`, `gold`, `ops`. Bỏ qua các bảng legacy.
 2. **Connector Superset** (service `superset_dashboards`): dashboard, chart và data model. Lineage từ dataset tới bảng Trino được connector tự suy ra.
-3. **Làm giàu từ `governance/catalog.yaml`:**
+3. **Làm giàu từ `governance/openmetadata/catalog.yaml`:**
    - Mô tả bảng và cột chính.
    - Owner team `data-platform`.
    - Classification `DataLayer` (Bronze/Silver/Gold/Ops).
-   - Glossary `RIPE Atlas Metrics` gồm 28 thuật ngữ, sinh từ `superset/metrics.json`, có kèm biểu thức tính.
+   - Glossary `RIPE Atlas Metrics` gồm 28 thuật ngữ, sinh từ `config/metrics.json`, có kèm biểu thức tính.
 4. **Lineage khai báo:** storage service `seaweedfs_staging` (3 container staging) → Bronze → Silver → Gold.
    - Có column-level lineage cho các cột chính.
    - Mỗi cạnh ghi `source: Manual` và mô tả `Khai báo từ code: <file/hàm> (provenance: declared-from-code)`.

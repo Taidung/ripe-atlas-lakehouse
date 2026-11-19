@@ -3,8 +3,8 @@
 Phiên bản: v1 (giai đoạn 2, 2026-11-19).
 Code tương ứng:
 - `ingestion/` (staging)
-- `spark/lakehouse/bronze.py` và `spark/jobs/bronze_ingest.py` (Bronze)
-- `sql/bronze/001_tables.sql` (DDL)
+- `transformation/lakehouse/bronze.py` và `transformation/jobs/bronze_ingest.py` (Bronze)
+- `transformation/sql/bronze.sql` (DDL)
 
 ## 1. Đơn vị tiến độ và luồng
 

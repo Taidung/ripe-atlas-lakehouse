@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ingestion.config import REPO_ROOT
+from ingestion.settings import REPO_ROOT
 
 PROBE_SET_DIR = REPO_ROOT / "config" / "probe_sets"
 

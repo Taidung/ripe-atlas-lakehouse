@@ -27,15 +27,15 @@ jobs:
       - name: Cài dependency theo uv.lock
         run: uv sync --frozen
       - name: Lint (ruff)
-        run: uv run --frozen ruff check ingestion tests spark superset airflow monitoring
+        run: uv run --frozen ruff check ingestion transformation quality serving orchestration observability governance tests
       - name: Kiểm tra cấu hình Compose (mọi profile, giá trị mẫu)
         run: |
           cp .env.example .env
           docker compose --profile all config -q
       - name: Kiểm tra file cấu hình JSON/YAML
         run: |
-          uv run --frozen python -c "import json,glob; [json.load(open(p, encoding='utf-8')) for p in glob.glob('config/probe_sets/*.json') + ['superset/metrics.json', 'monitoring/grafana/dashboards/ripe-pipeline.json']]"
-          uv run --frozen python monitoring/grafana/build_dashboard.py && git diff --exit-code monitoring/grafana/dashboards/
+          uv run --frozen python -c "import json,glob; [json.load(open(p, encoding='utf-8')) for p in glob.glob('config/probe_sets/*.json') + ['config/metrics.json', 'observability/grafana/dashboards/ripe-pipeline.json']]"
+          uv run --frozen python observability/grafana/build_dashboard.py && git diff --exit-code observability/grafana/dashboards/
       - name: Unit + contract test (offline)
         run: uv run --frozen pytest -q --junitxml=reports/unit.xml
       - uses: actions/upload-artifact@v4
@@ -53,19 +53,19 @@ jobs:
       - name: Build image Spark (jar pin SHA-256, GX, pytest)
         uses: docker/build-push-action@v6
         with:
-          context: spark
+          context: transformation
           load: true
           tags: ripe-atlas-spark:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Test Spark (Bronze/Silver/Gold, GX) trong container
+      - name: Test transformation (Bronze/Silver/Gold) + quality (GX, SCD2, đối soát) trong container
         run: |
           mkdir -p reports
           # --entrypoint: entrypoint gốc là đường dẫn tương đối ./entrypoint.sh, hỏng khi đổi -w (exit 127).
           # spark-defaults.conf của dự án (compose mount sẵn); thiếu file này 30/32 test lỗi.
           docker run --rm --entrypoint python -v "$PWD:/opt/app" -w /opt/app \
-            -v "$PWD/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro" ripe-atlas-spark:ci \
-            -m pytest -q -p no:cacheprovider tests/spark --junitxml=reports/spark.xml
+            -v "$PWD/transformation/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro" ripe-atlas-spark:ci \
+            -m pytest -q -p no:cacheprovider tests/transformation tests/quality --junitxml=reports/spark.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:

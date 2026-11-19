@@ -13,13 +13,13 @@ Mọi số liệu dưới đây là **số đo thật** trong ngày 2026-11-18/1
 
 | Loại | Phạm vi | Lệnh | Kết quả |
 |---|---|---|---|
-| Unit (offline) | Cửa sổ thời gian/timezone, parse, hash, phân loại delta, retry/backoff/Retry-After, probe set và lấy mẫu phân tầng, dlt ghi thật vào thư mục tạm, manifest, cleanup | `pytest tests/unit` | **42/42 pass**, trên Windows và trong container |
-| Contract (live) | Metadata 4 measurement, biên start/stop inclusive, `rcvd`/`dup`/`-1`, phân trang probes | `pytest -m live tests/live` | **6/6 pass**, 6 request |
-| Spark: Bronze | 9 lý do quarantine, trùng nội dung, cùng khóa khác payload, toàn vẹn batch | `pytest tests/spark` | đạt |
+| Unit (offline) | Cửa sổ thời gian/timezone, parse, hash, phân loại delta, retry/backoff/Retry-After, probe set và lấy mẫu phân tầng, dlt ghi thật vào thư mục tạm, manifest, cleanup | `pytest tests/ingestion` | **42/42 pass**, trên Windows và trong container |
+| Contract (live) | Metadata 4 measurement, biên start/stop inclusive, `rcvd`/`dup`/`-1`, phân trang probes | `pytest -m live tests/contract` | **6/6 pass**, 6 request |
+| Spark: Bronze | 9 lý do quarantine, trùng nội dung, cùng khóa khác payload, toàn vẹn batch | `pytest tests/transformation tests/quality` | đạt |
 | Spark: Silver | SCD2 (snapshot trùng, quay lại giá trị cũ, chồng lấn), as-of ở ranh giới, unknown member, mốc nửa đêm GMT+7, chọn bản ghi khi nguồn sửa, đối soát reply, GX bắt lỗi critical | ″ | đạt |
 | Spark: Gold | Loss/mean/tỷ lệ phản hồi tính từ tổng, mẫu số 0 → `NULL`, rollup, percentile từ histogram, ghép cặp mutual nearest, lưới coverage, nhất quán giữa các mart | ″ | **32/32 pass** (tổng Spark) |
-| Tương thích | Spark ghi, Trino đọc cùng snapshot | `scripts/smoke_compat.sh` | PASS |
-| Đối chiếu Gold/Silver | Tính lại KPI độc lập, sai số percentile | `crosscheck_gold.py` | PASS, khớp đến 4 chữ số thập phân; sai số percentile ≤ 0,95% |
+| Tương thích | Spark ghi, Trino đọc cùng snapshot | `tests/integration/smoke_compat.sh` | PASS |
+| Đối chiếu Gold/Silver | Tính lại KPI độc lập, sai số percentile | `gold_crosscheck.py` | PASS, khớp đến 4 chữ số thập phân; sai số percentile ≤ 0,95% |
 | Superset | 22 chart chạy truy vấn qua API, render trên trình duyệt, tổ hợp filter/rollup/timezone | `provision.py`, `verify_filters.py` | 22/22, **10/10** |
 | OpenMetadata | Connector Trino/Superset, mô tả, glossary, lineage | `run_ingestion.py` | Xem §4 |
 | Cảnh báo | 5 tình huống thử + cảnh báo thật | Push metric giả, dừng service | Xem §5 |
@@ -37,7 +37,7 @@ Mọi số liệu dưới đây là **số đo thật** trong ngày 2026-11-18/1
 | Ghi được một phần staging (dlt xong, không có manifest) | Test `test_failed_load_leaves_no_manifest` | Không ai đọc object; lần sau stage lại; `cleanup` tìm và xóa object mồ côi |
 | dlt xong nhưng Bronze chưa chạy | Lần chạy ngoài Airflow (container bị bỏ lại) | Bronze lần sau tự nhận 16 manifest, thêm 11.012 dòng |
 | **Silver đã commit một bảng rồi chết (OOM)** | Sự cố thật lúc 07:37 | `fact_ping_result` đã commit, `fact_ping_reply` chưa. Kiểm tra `histogram_total_eq_rtt_count` của Gold **chặn công bố**. Sau khi sửa (Gold đọc đúng snapshot Silver đã công bố), Gold công bố được từ cặp snapshot nhất quán. Silver chạy lại với driver 3 GB → nhất quán |
-| GX phát hiện lỗi nghiêm trọng | `scripts/test_dq_block_on_branch.sh` trên nhánh Nessie tạm | exit 2, `blocked`, snapshot fact giữ nguyên, `main` không đổi, nhánh tạm tự xóa |
+| GX phát hiện lỗi nghiêm trọng | `tests/integration/dq_block_on_branch.sh` trên nhánh Nessie tạm | exit 2, `blocked`, snapshot fact giữ nguyên, `main` không đổi, nhánh tạm tự xóa |
 | Job bị kill hoặc container restart | Dừng Airflow khi task ingestion đang chạy | Container ingestion chạy tiếp và tự xong (16/16, exit 0): **không mất và không trùng dữ liệu**, nhưng thành container mồ côi; `on_kill` không chạy khi tắt cả Airflow. Ghi nhận trong runbook |
 | Hai run cùng xử lý một phạm vi | 2 ingestion song song, cửa sổ 07:00Z, msm 1001 | Mỗi run stage 2.964 (không có lock); Bronze đọc 5.928, **thêm 2.964**; khóa và `record_uid` duy nhất |
 | Hạ tầng quá tải (DNS Docker lỗi) | Sự cố thật: RAM host cạn | S3 client hết 5 lần retry → Silver fail **trước** commit; bản công bố trước giữ nguyên |

@@ -21,14 +21,14 @@ Tất cả image đều được pin theo digest.
 | Nessie | 0.108.8, version store JDBC2 trên Postgres 16 | `ghcr.io/projectnessie/nessie:0.108.8@sha256:aee5e959…` | Đã kiểm chứng | Spark và Trino cùng đọc ref `main` |
 | Postgres | 16-alpine | `postgres@sha256:aa6cb33c…` | Đang chạy | Dùng cho Nessie và Superset, mỗi service một container riêng |
 | SeaweedFS | 4.53 | `chrislusf/seaweedfs@sha256:ccad23e1…` | Đã đo | Lệnh `weed version` |
-| Trino | 484 | `trinodb/trino:484@sha256:2704eb53…`, `mem_limit` 3 GB, giới hạn truy vấn trong `trino/config.properties` | **Đã kiểm chứng** | Xem bên dưới; `approx_percentile(x, w, p)` có trọng số dùng cho p95 |
+| Trino | 484 | `trinodb/trino:484@sha256:2704eb53…`, `mem_limit` 3 GB, giới hạn truy vấn trong `serving/trino/config.properties` | **Đã kiểm chứng** | Xem bên dưới; `approx_percentile(x, w, p)` có trọng số dùng cho p95 |
 | Superset | 6.1.0 (Python 3.10.21) | `apache/superset:6.1.0@sha256:16b50bbe…` + `psycopg2-binary==2.9.10`, `trino[sqlalchemy]==0.333.0` | **Đã kiểm chứng** | Xem bên dưới |
 
 ### Bằng chứng cho Trino 484
 
 - Connector `iceberg.catalog.type=nessie` vẫn được hỗ trợ.
 - Cùng catalog, Trino thấy schema `bronze` và `silver` do Spark tạo.
-- `scripts/smoke_compat.sh` đạt **PASS** (2026-11-19):
+- `tests/integration/smoke_compat.sh` đạt **PASS** (2026-11-19):
 
   | Kiểm tra | Spark | Trino |
   |---|---|---|

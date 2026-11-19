@@ -12,7 +12,7 @@
 
 - `spark/staging_to_bronze.py`, `spark/bronze_to_silver.py`
 - `tests/test_bronze.py`, `tests/test_silver.py`
-- Thay đổi trong `README.md`, `docker-compose.yaml`, `spark/spark-defaults.conf`
+- Thay đổi trong `README.md`, `docker-compose.yaml`, `transformation/spark-defaults.conf`
 
 ### Làm trong phiên này (có bằng chứng)
 
@@ -53,7 +53,7 @@
   - Image build thêm driver `trino` và `psycopg2`.
   - Script khởi tạo idempotent: tạo admin và kết nối Trino.
   - Truy vấn SQL Lab qua REST API trả về đúng 22.361 dòng.
-- **`scripts/smoke_compat.sh` đạt PASS:**
+- **`tests/integration/smoke_compat.sh` đạt PASS:**
   - Cùng snapshot id giữa Spark và Trino.
   - 6 bảng bronze/silver có số dòng khớp nhau.
 - **RAM core + analytics:** ≈ 2,9 GB.
@@ -87,8 +87,8 @@
   - `ingestion`: Python 3.11, dependency pin theo `uv.lock`, chạy ở profile `jobs`.
   - Spark: nhúng sẵn jar S3A (pin SHA-256) và pytest.
 - **Bronze:**
-  - DDL `sql/bronze/001_tables.sql` gồm 5 bảng mới.
-  - Job `spark/jobs/bronze_ingest.py`: MERGE theo `record_uid`, quarantine, audit `ingest_manifest` append-only.
+  - DDL `transformation/sql/bronze.sql` gồm 5 bảng mới.
+  - Job `transformation/jobs/bronze_ingest.py`: MERGE theo `record_uid`, quarantine, audit `ingest_manifest` append-only.
 - **Test:** 41 unit test offline (gồm test dlt ghi thật vào thư mục tạm) và 15 test Spark. Tất cả pass, cả trên host Windows lẫn trong container.
 - **Chạy thật trên stack** (dev-200-v1, 22:00Z 18/11 – 02:00Z 19/11):
   - 24 job ingestion, 0 lỗi; 44.340 result.
@@ -128,7 +128,7 @@
   - `silver.dim_probe`, `silver.dim_measurement`: SCD2, có unknown member `-1`.
   - `silver.dim_date`, `silver.dim_time`.
   - `ops.dq_result`, `ops.partition_status`.
-- **Code:** `spark/lakehouse/silver.py`, `spark/lakehouse/quality.py`, `spark/jobs/silver_build.py`. GX Core 1.25.0 chạy Checkpoint và lưu Data Docs vào `artifacts/gx/`.
+- **Code:** `transformation/lakehouse/silver.py`, `quality/dq/`, `transformation/jobs/silver_build.py`. GX Core 1.25.0 chạy Checkpoint và lưu Data Docs vào `artifacts/gx/`.
 - **Test:** 25 test Spark pass (10 test Silver mới), gồm:
   - SCD2 với snapshot trùng, thuộc tính quay về giá trị cũ, và kiểm tra chồng lấn.
   - As-of join ở đúng mốc ranh giới, probe chưa có metadata, không nhân bản dòng.
@@ -138,7 +138,7 @@
   - 260.442 result và 790.353 reply. Silver khớp Bronze theo từng measurement; mọi kiểm tra đối soát đạt.
   - **Idempotent:** chạy 2 lần cùng input cho checksum nội dung giống hệt (result 44.340 dòng, reply 133.125 dòng).
   - **Metadata đến muộn:** ingest 216.102 result của tập strat trước khi có metadata → 208.276 result có `probe_sk = -1`. Sau khi ingest metadata, `--repair-unknown` đưa số này về 0, số dòng không đổi.
-  - **Chặn công bố khi có lỗi critical:** `scripts/test_dq_block_on_branch.sh` chạy trên nhánh Nessie tạm. Kết quả: exit 2, trạng thái `blocked`, snapshot fact giữ nguyên, `main` không bị ảnh hưởng.
+  - **Chặn công bố khi có lỗi critical:** `tests/integration/dq_block_on_branch.sh` chạy trên nhánh Nessie tạm. Kết quả: exit 2, trạng thái `blocked`, snapshot fact giữ nguyên, `main` không bị ảnh hưởng.
   - **Đo chế độ analysis:** 216.102 result/giờ; staging 29,3 MB/giờ (≈ 0,70 GB/ngày). Ingestion 2 phút 28 giây/giờ, Bronze 47 giây, Silver cho cả ngày khoảng 2,5 phút.
 - **Phát hiện từ dữ liệu:**
   - Đồng hồ probe lệch: 712/44.340 result từ 3 probe có `stored_ts < event_ts` (tới −7.725 s). Đã thêm cột `clock_suspect`.
@@ -168,8 +168,8 @@
 
 - **Viết trước khi xây mart:**
   - `docs/metric-dictionary.md`: tử số, mẫu số, cách xử lý `NULL`, khả năng cộng dồn, quy tắc ghép cặp IPv4/IPv6, cách tính độ đầy đủ ước tính.
-  - `superset/metrics.json`: biểu thức metric dùng chung cho test và dashboard.
-- **7 Gold mart** (`spark/lakehouse/gold.py`, `spark/jobs/gold_build.py`):
+  - `config/metrics.json`: biểu thức metric dùng chung cho test và dashboard.
+- **7 Gold mart** (`transformation/lakehouse/gold.py`, `transformation/jobs/gold_build.py`):
   - Các mart: target, country, ASN, probe, histogram RTT, cặp IPv4/IPv6, coverage (lưới đủ 24 giờ).
   - Chỉ đọc partition Silver đã công bố. Ghi bằng overwrite theo ngày. Trạng thái công bố lưu ở `ops.partition_status`.
 - **Đo đạc trước khi thiết kế:**
@@ -181,7 +181,7 @@
   - Percentile, ghép cặp mutual nearest, lưới coverage, tính nhất quán giữa các mart.
 - **Chạy thật ngày 2026-11-19:**
   - Gold `published`, 17/17 kiểm tra đạt.
-  - `crosscheck_gold.py` **PASS**: KPI của Gold khớp phép tính độc lập từ Silver ở cả 8 nhóm (cohort × measurement); sai số percentile lớn nhất 0,95%.
+  - `gold_crosscheck.py` **PASS**: KPI của Gold khớp phép tính độc lập từ Silver ở cả 8 nhóm (cohort × measurement); sai số percentile lớn nhất 0,95%.
 - **Superset:**
   - `provision.py` dựng 9 dataset, 23 chart và dashboard; 22/22 chart dùng API mới chạy truy vấn thành công. Xuất ZIP.
   - Kiểm tra bằng trình duyệt: mọi chart render, không chart nào lỗi.
@@ -194,7 +194,7 @@
 
 - Một truy vấn chẩn đoán quá nặng (`approx_percentile` với accuracy 0,0001 trên ~800 nghìn reply) làm Trino chạy ở 2 GB / ~700% CPU nhiều phút.
   - Hệ thống chặn thao tác kill query, nên đã tạo lại container Trino. Trino không giữ state; dữ liệu nằm trong Iceberg/Nessie.
-  - Đã thêm `trino/config.properties` để không tái diễn: `query.max-execution-time=5m`, `query.max-run-time=10m`, `query.max-memory=1GB`, `query.client.timeout=2m`. `mem_limit` tăng lên 3 GB.
+  - Đã thêm `serving/trino/config.properties` để không tái diễn: `query.max-execution-time=5m`, `query.max-run-time=10m`, `query.max-memory=1GB`, `query.client.timeout=2m`. `mem_limit` tăng lên 3 GB.
 
 ### Còn thiếu hoặc rủi ro
 
@@ -226,6 +226,47 @@ Bằng chứng chi tiết: `docs/test-report.md`.
 - **OpenMetadata 2.0.8:** 20 bảng, dashboard và 23 chart, glossary 28 thuật ngữ, 23 cạnh lineage khai báo, column lineage.
 - **CI:** 3 workflow, lint sạch. **Chưa chạy trên GitHub.**
 - **Phục hồi:** đã thử 12 tình huống (bảng §2 của test report), trong đó có 2 sự cố thật: Silver OOM và DNS lỗi do quá tải RAM.
+
+## Phiên 2026-11-19: Refactor theo thành phần data platform
+
+Mã nguồn được sắp xếp lại theo thành phần. Mỗi thư mục có `README.md`; bản đồ tổng nằm trong `README.md` gốc, mục "Bản đồ mã nguồn".
+Mọi đường dẫn trong `docs/` đã đổi sang cấu trúc mới, kể cả ở các mục lịch sử phía trên.
+
+| Cũ | Mới |
+|---|---|
+| `spark/jobs/`, `spark/lakehouse/`, `sql/*/001_tables.sql`, `spark/Dockerfile` | `transformation/jobs/`, `transformation/lakehouse/`, `transformation/sql/{bronze,silver,ops}.sql`, `transformation/Dockerfile` |
+| `spark/lakehouse/quality.py` (một file) | package `quality/dq/`: `results`, `gx_suites`, `gx_runner`, `checks`, `recorder` |
+| `spark/lakehouse/ops.py` | `transformation/lakehouse/publication.py` |
+| `crosscheck_gold.py`, `maintenance.py` | `gold_crosscheck.py`, `iceberg_maintenance.py` |
+| `spark/jobs/staging_to_bronze.py`, `bronze_to_silver.py` + test | `transformation/legacy/` |
+| `ingestion/{config,windows,atlas_http,records,staging,pipeline,cleanup,build_probe_set}.py` | `ingestion/{settings,time_windows,api_client,result_records,staging_store,jobs,staging_cleanup,probe_sampling}.py`; CLI ở `ingestion/cli.py` |
+| `seaweedfs/` | `storage/seaweedfs/` |
+| `trino/`, `superset/` | `serving/trino/`, `serving/superset/` |
+| `superset/metrics.json` | `config/metrics.json` (Gold test, Superset, OpenMetadata dùng chung) |
+| `airflow/dags/` | `orchestration/airflow/dags/` |
+| `monitoring/` | `observability/` |
+| `governance/*` | `governance/openmetadata/` |
+| `tests/unit`, `tests/spark`, `tests/live`, `scripts/*.sh` | `tests/ingestion`, `tests/transformation` + `tests/quality`, `tests/contract`, `tests/integration` |
+
+Ngoài việc di chuyển file:
+- Job Silver và Gold gọi API `dq.*` mới. Hàm kiểm tra nhất quán Gold chuyển từ `lakehouse/gold.py` sang `dq/checks.py::gold_consistency_checks`.
+- Helper dùng chung (`parse_instant`, `parse_dates`, `table_columns`, `count_by_measurement`) gom về `lakehouse/common.py`.
+- Fixture và builder của test Spark gom về `tests/spark_support.py`.
+- Image Spark: `PYTHONPATH` trỏ tới `/opt/app/transformation:/opt/app/quality`.
+- `build_dashboard.py` ghi LF trên mọi OS, nên chạy trên Windows không còn tạo diff giả.
+
+Kiểm chứng sau refactor (2026-11-19):
+- `ruff` sạch.
+- Unit test ingestion 42/42, chạy trên Windows và trong container `ingestion`.
+- Test Spark `tests/transformation` + `tests/quality` 34/34, chạy trong container.
+- Test legacy 5/5.
+- `docker compose --profile all config -q` OK; dashboard Grafana sinh lại không có diff.
+- Chạy thật ngày 2026-11-19, cả 4 bước exit 0:
+  - `bronze_ingest`
+  - `silver_build`: `published_with_warnings`. Cảnh báo duy nhất là `rtt_ms` ngoài [0, 60000] ở `fact_ping_reply`, giống lần chạy trước refactor.
+  - `gold_build`: `published`
+  - `gold_crosscheck`: **PASS**, sai số percentile lớn nhất 0,93%.
+- Chưa chạy lại Superset `provision.py` và OpenMetadata ingestion sau khi đổi mount `config/metrics.json`; mới kiểm tra cú pháp và cấu hình Compose.
 
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
