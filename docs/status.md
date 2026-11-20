@@ -408,6 +408,16 @@ thư mục của commit cuối giống hệt), nhưng mã commit thay đổi. C�
 `config/probe_sets/dev-200-v1.json` vẫn ghi `3cf93c5` (nay là `6313ae1`), vì probe set là bất biến: SHA-256 của nó
 nằm trong mọi manifest ingest. Các run CI ghi ở trên vẫn đúng theo số run; chúng chạy trên mã commit cũ, cùng nội dung.
 
+## Phiên 2026-11-20: Chuẩn bị chia sẻ repo (repo public)
+
+- Commit `ca3868c` (17/11) từng commit nhầm `.env`, chứa `NESSIE_POSTGRES_PASSWORD` trùng giá trị đang dùng. Postgres không
+  mở cổng ra ngoài máy, nhưng giá trị đã công khai. **Đã đổi mật khẩu**: sinh mật khẩu ngẫu nhiên 32 ký tự, `ALTER USER nessie`,
+  cập nhật `.env`, tạo lại container `postgres` và `nessie`. Kiểm chứng qua mạng Docker: mật khẩu cũ bị từ chối
+  (`password authentication failed`), mật khẩu mới đăng nhập được; Nessie `healthy`, đọc đủ 27 bảng, hash `main` không đổi.
+  Không viết lại lịch sử `main`: đổi mật khẩu đã làm giá trị cũ vô dụng.
+- README bỏ yêu cầu `ingestion/.dlt/secrets.toml` (code không dùng); ghi rõ mọi bí mật chỉ nằm trong `.env`, và cách sinh `AIRFLOW_FERNET_KEY`.
+- Khoá `S3_PROCESSING_ACCESS_KEY` khớp với chữ trong tài liệu chỉ vì đó là tên định danh (access key), không phải secret key.
+
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
 | Tiêu chí | Trạng thái |

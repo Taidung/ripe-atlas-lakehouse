@@ -63,7 +63,13 @@ Cần Docker Desktop (đã kiểm thử với Docker 29.6.2, Compose v5.3.1), Gi
 cp .env.example .env   # rồi thay mọi giá trị change-me
 ```
 
-`ingestion/.dlt/secrets.toml` chứa credentials ghi vào staging (identity `atlas-ingest`). File này và `.env` đều nằm trong `.gitignore`.
+Mọi khoá và mật khẩu chỉ nằm trong `.env`. Ví dụ, ingestion ghi vào staging bằng `S3_INGEST_ACCESS_KEY` / `S3_INGEST_SECRET_KEY`, tức danh tính `atlas-ingest` trong `storage/seaweedfs/s3.json`. Không cần tạo `ingestion/.dlt/secrets.toml`: code truyền credentials cho dlt trực tiếp từ biến môi trường. `.env` nằm trong `.gitignore`, **không bao giờ commit**; nếu lỡ commit thì đổi ngay các giá trị trong đó, vì xoá file khỏi lịch sử git không đủ.
+
+`AIRFLOW_FERNET_KEY` phải là chuỗi base64 32 byte, có thể sinh bằng:
+
+```bash
+python -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
+```
 
 ## 2. Khởi động theo profile
 
