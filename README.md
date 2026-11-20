@@ -327,6 +327,7 @@ uv run --frozen pytest -q
 | `docs/design.md` | Kiến trúc |
 | `docs/api-survey.md` | Khảo sát API |
 | `docs/data-contracts.md` | Data contract |
+| `docs/data-dictionary.md` | Từ điển dữ liệu: mọi bảng, mọi cột (kiểu, null, ý nghĩa) |
 | `docs/silver-model.md` | Mô hình Silver |
 | `docs/metric-dictionary.md` | Từ điển metric |
 | `docs/dashboard-spec.md` | Đặc tả dashboard |
