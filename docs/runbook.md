@@ -50,6 +50,32 @@ Các lệnh dưới đây chạy từ thư mục gốc repo. Trên Git Bash (Win
   `for s in bronze_results bronze_metadata silver gold maintenance; do for g in "" /outcome/success /outcome/failure; do curl -X DELETE "http://localhost:9091/metrics/job/ripe_pipeline/stage/$s$g"; done; done`
   (đã chạy trên stack local ngày 2026-11-19; group `staging_cleanup` cố ý không có `run_type`, giữ nguyên).
 
+### Task Airflow lỗi `PermissionError: [Errno 13] Permission denied` khi gọi Docker
+
+Log có `DockerException: Error while fetching server API version ... Permission denied`: user `airflow` (uid 50000)
+không thuộc nhóm sở hữu `/var/run/docker.sock`, nên operator không chạy được container ingestion hay `spark-submit`.
+GID của socket khác nhau theo máy và có thể đổi sau khi Docker Desktop khởi động lại (đã gặp 0, rồi 1001 ngày 20/11).
+
+1. Xem GID hiện tại:
+   ```bash
+   docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c %g /var/run/docker.sock
+   ```
+2. Đặt `DOCKER_GID=<số đó>` trong `.env` (mặc định 1001), rồi tạo lại container: `docker compose --profile orchestration up -d airflow`.
+3. Kiểm tra: `docker compose exec airflow id` phải liệt kê GID đó trong `groups`.
+4. Task đang `up_for_retry` sẽ tự chạy lại; task đã `failed` thì Clear trong giao diện Airflow.
+
+### Task ingestion trong Airflow lỗi `ingestion exited with code 2`
+
+Mã 2 là lỗi tham số dòng lệnh. Airflow chạy ingestion bằng **code đóng sẵn trong image** `ripe-atlas-ingestion:0.2`, không
+đọc thư mục `ingestion/` trong repo (khác với Spark, vốn mount code trực tiếp). Sửa code ingestion mà chưa build lại image
+thì DAG có thể gọi tham số mà image cũ chưa biết (đã gặp ngày 20/11 với `--run-type`).
+
+```bash
+docker compose --profile jobs build ingestion
+```
+
+Sau đó Clear task lỗi trong Airflow. **Mỗi lần sửa `ingestion/` hoặc `config/probe_sets/`, build lại image này.**
+
 ## Cảnh báo
 
 <a id="ripe-job-failing"></a>

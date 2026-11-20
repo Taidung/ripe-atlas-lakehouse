@@ -254,6 +254,13 @@ docker compose exec trino trino --execute "SELECT measurement_id, count(*), coun
 
 ## 6. Điều phối (Airflow)
 
+Airflow gọi Docker qua `/var/run/docker.sock` để chạy ingestion và job Spark. `DOCKER_GID` trong `.env` phải là GID nhóm
+sở hữu socket đó (Docker Desktop thường là 1001; cách kiểm tra ghi trong `.env.example`). Sai GID thì task báo
+`Permission denied`; xem `docs/runbook.md`.
+
+Airflow chạy ingestion bằng image `ripe-atlas-ingestion:0.2`, nên **sau khi sửa `ingestion/` hoặc `config/probe_sets/`
+phải build lại**: `docker compose --profile jobs build ingestion`. Job Spark thì không cần, vì code được mount trực tiếp.
+
 ```bash
 docker compose --profile orchestration up -d
 docker compose exec airflow airflow dags unpause ripe_atlas_hourly      # DAG mặc định bị tạm dừng

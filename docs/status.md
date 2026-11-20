@@ -418,6 +418,28 @@ nằm trong mọi manifest ingest. Các run CI ghi ở trên vẫn đúng theo s
 - README bỏ yêu cầu `ingestion/.dlt/secrets.toml` (code không dùng); ghi rõ mọi bí mật chỉ nằm trong `.env`, và cách sinh `AIRFLOW_FERNET_KEY`.
 - Khoá `S3_PROCESSING_ACCESS_KEY` khớp với chữ trong tài liệu chỉ vì đó là tên định danh (access key), không phải secret key.
 
+## Phiên 2026-11-20: Dọn object storage
+
+Kiểm kê (chỉ đọc) cả hai bucket, đối chiếu với catalog Nessie (chỉ còn nhánh `main`), rồi xoá theo 4 nhóm được duyệt:
+
+| Nhóm | Đã xoá | Dung lượng |
+|---|---|---|
+| A. Thư mục bảng mồ côi | `silver/fact_ping_result_5e8f…`, `silver/fact_ping_reply_6fad…` (lần tạo bảng đầu ngày 19/11, không bảng nào dùng) | 15,6 MB |
+| B. Bảng legacy + test | Xoá khỏi catalog (commit Nessie) rồi xoá file: `bronze.ping_results`, `bronze.measurements`, `bronze.probes`, `silver.legacy_dim_measurement`, `silver.legacy_dim_probe`, `silver.legacy_fact_ping`, `smoke.compat_check` và namespace `smoke` (smoke test tự tạo lại) | ≈ 5,5 MB |
+| C. Staging thế hệ đầu | `staging/ripe_atlas/{init, measurements, ping_results, probes}` | 1,8 MB |
+| D. Snapshot cũ | 253 snapshot, 3.662 file dữ liệu, 463 file manifest, 505 file mồ côi (cũ hơn 25 giờ) | ≈ 1,1 GB |
+
+Nhóm D: mỗi bảng giữ snapshot hiện tại và mọi snapshot mà `ops.partition_status` trỏ tới (Gold đọc Silver theo snapshot
+đã công bố); script dừng hẳn nếu một snapshot được ghim không còn tồn tại. Bật tạm `gc.enabled=true` từng bảng, chạy
+`expire_snapshots` + `remove_orphan_files`, rồi trả về `false`. Sau khi dọn, mọi snapshot được giữ đều đọc lại được.
+
+Kết quả: `warehouse` từ 1.330 MB / 6.038 file còn 233 MB / 1.336 file; không còn thư mục không thuộc bảng; staging không
+có object mồ côi. Đánh đổi: không còn đọc lại được các phiên bản cũ đã xoá (time travel tới snapshot cũ, hoặc tới commit
+Nessie trước thời điểm dọn). Giữ lại: `_manifests`, `_index`, `_probe_sets`, dữ liệu staging có manifest, `_dlt_*` (nhỏ).
+
+Ghi chú khi làm lại: `remove_orphan_files` không cho ngưỡng dưới 24 giờ, và cần
+`--conf spark.hadoop.fs.s3.impl=org.apache.hadoop.fs.s3a.S3AFileSystem` vì vị trí bảng dùng scheme `s3://`.
+
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
 | Tiêu chí | Trạng thái |
