@@ -38,9 +38,13 @@ thay toàn bộ ngày (chèn/cập nhật theo khóa, xóa dòng cũ không còn
 Giữa các bảng (fact và reply, 7 mart) vẫn là các commit riêng: tầng sau đọc snapshot đã công bố nên không bị ảnh hưởng,
 nhưng Superset đọc bản mới nhất có thể thấy một ngày đang được ghi dở giữa các mart trong vài giây.
 
-**Bảng tạm riêng mỗi lượt chạy:** bảng nháp, bảng kiểm tra và danh sách object đang chờ nằm trong schema
-`work_<run_id>` (`lakehouse/trino_db.py::work_schema`), xóa khi xong; lượt chạy tay chạy cùng lúc với Airflow không đè
-bảng tạm của nhau. Schema sót lại do job bị giết được `maintenance` dọn sau 1 ngày.
+**Bảng tạm riêng mỗi lượt chạy:** bảng nháp, bảng kiểm tra, danh sách object đang chờ và cả bảng `<bảng>__dbt_tmp` mà
+dbt tạo khi ghi incremental (macro `trino__make_temp_relation`) đều nằm trong schema `work_<run_id>`
+(`lakehouse/trino_db.py::work_schema`), xóa khi xong; lượt chạy tay chạy cùng lúc với Airflow không đè bảng tạm của nhau.
+MERGE còn chỉ lấy dòng của đúng ngày đang ghi. Schema sót lại do job bị giết được `maintenance` dọn sau 1 ngày.
+
+**Hủy đúng query khi dừng task:** runner và dbt gắn client tag Trino `TRINO_CLIENT_TAG` (Airflow đặt theo dag/task/run/try);
+`TransformOperator.on_kill` chỉ hủy query mang tag của task đó.
 
 Biến `LAKEHOUSE_CATALOG` (mặc định `lakehouse`) chọn catalog ghi; `lakehouse_dqtest` trỏ vào nhánh Nessie `dqtest`,
 chỉ dùng cho `tests/integration/dq_block_on_branch.sh`.

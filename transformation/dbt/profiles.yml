@@ -13,6 +13,8 @@ ripe_lakehouse:
       schema: work
       threads: 1
       http_scheme: http
+      # Cùng tag với runner: Airflow hủy đúng query của task khi task bị dừng (TransformOperator.on_kill).
+      client_tags: ["{{ env_var('TRINO_CLIENT_TAG', 'manual') }}"]
       session_properties:
         # Mặc định của cluster (5 phút) dành cho truy vấn dashboard; job biến đổi một ngày cần lâu hơn.
         query_max_execution_time: 30m

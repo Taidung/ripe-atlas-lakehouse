@@ -33,6 +33,7 @@ class Trino:
             schema="work",
             http_scheme="http",
             session_properties={"query_max_execution_time": "30m", "query_max_run_time": "30m"},
+            client_tags=[os.environ.get("TRINO_CLIENT_TAG", "manual")],  # Airflow hủy query theo tag (on_kill)
         )
         return cls(conn)
 

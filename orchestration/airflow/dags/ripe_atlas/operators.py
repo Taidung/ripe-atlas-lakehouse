@@ -75,13 +75,16 @@ class DockerJobOperator(BaseOperator):
     def resolve_args(self, context) -> list[str]:
         return self.arguments
 
+    def extra_env(self, context) -> dict[str, str]:
+        return {}
+
     def on_exit_code(self, code: int) -> None:
         if code != 0:
             raise AirflowException(f"{self.image} exited with code {code}")
 
     def execute(self, context):
         args = self.resolve_args(context)
-        env = {**self.fixed_env, **{k: os.environ[k] for k in self.env_keys if os.environ.get(k)}}
+        env = {**self.fixed_env, **{k: os.environ[k] for k in self.env_keys if os.environ.get(k)}, **self.extra_env(context)}
         self.log.info("%s %s (network %s)", self.image, shlex.join(args), NETWORK)
         client = _docker()
         self._container = client.containers.run(
@@ -130,6 +133,7 @@ class TransformOperator(DockerJobOperator):
         """
         super().__init__(arguments=arguments or [], **kwargs)
         self.command, self.run_type, self.hourly_range = command, run_type, hourly_range
+        self._tag = None
 
     def resolve_args(self, context) -> list[str]:
         args = [self.command, *self.arguments, "--run-type", self.run_type]
@@ -137,6 +141,12 @@ class TransformOperator(DockerJobOperator):
             start, end = window_bounds(context)
             args += ["--start", start, "--end", end]
         return args
+
+    def extra_env(self, context) -> dict[str, str]:
+        # Mọi query Trino của lượt chạy này (runner + dbt) mang client tag riêng, để on_kill chỉ hủy đúng chúng.
+        ti = context["ti"]
+        self._tag = f"airflow:{ti.dag_id}:{ti.task_id}:{ti.run_id}:{ti.try_number}".replace(",", "_")
+        return {"TRINO_CLIENT_TAG": self._tag}
 
     def on_exit_code(self, code: int) -> None:
         if code == 2:
@@ -147,14 +157,15 @@ class TransformOperator(DockerJobOperator):
 
     def on_kill(self):
         """Dừng container chưa đủ: query đã gửi vẫn chạy trên Trino và có thể ghi tiếp sau khi pool đã nhả slot.
-        shortcut: hủy MỌI query đang chạy của user `transform` (pool lakehouse_writer chỉ cho một task ghi một lúc);
-        nếu sau này có nhiều luồng transform song song thì gắn tag riêng cho query của từng task."""
+        Hủy các query còn chạy mang client tag của ĐÚNG lượt chạy này; lượt chạy tay song song không bị ảnh hưởng."""
         super().on_kill()
+        if self._tag is None:
+            return
         import requests
 
         headers = {"X-Trino-User": "transform"}
         for q in requests.get(f"{TRINO_URL}/v1/query", headers=headers, timeout=10).json():
-            if q["session"]["user"] == "transform" and q["state"] not in ("FINISHED", "FAILED"):
+            if self._tag in q["session"].get("clientTags", []) and q["state"] not in ("FINISHED", "FAILED"):
                 self.log.warning("cancel Trino query %s (%s)", q["queryId"], q["state"])
                 requests.delete(f"{TRINO_URL}/v1/query/{q['queryId']}", headers=headers, timeout=10)
 

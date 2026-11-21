@@ -196,8 +196,9 @@ Khác biệt có chủ đích so với bản Spark:
 | Vấn đề | Sửa | Kiểm chứng |
 |---|---|---|
 | Ghi lại một ngày = xóa rồi chèn (2 commit): lỗi giữa chừng để lại ngày trống | Chiến lược `replace_day`: một `MERGE` mỗi bảng | Mỗi bảng tăng đúng 1 snapshot (20 → 21, `overwrite`); dòng cũ không còn trong bản mới bị xóa (chèn dòng giả trên nhánh `dqtest` → 0 sau khi chạy Gold); không trùng khóa (87.799 / 87.799 `result_id`) |
-| Bảng tạm dùng chung: chạy tay song song có thể đè nhau | Schema tạm `work_<run_id>` mỗi lượt, xóa khi xong; `maintenance` dọn bản sót | Sau khi chạy chỉ còn schema `work` (bảng mẫu); test đơn vị cho tên schema và luật dọn |
-| Dừng task Airflow không dừng query Trino | `TransformOperator.on_kill` hủy query đang chạy của user `transform` qua REST `/v1/query` | Chưa thử bằng cách giết task thật |
+| Bảng tạm dùng chung: chạy tay song song có thể đè nhau | Schema tạm `work_<run_id>` mỗi lượt, xóa khi xong; `maintenance` dọn bản sót. Vòng review 2: bảng `__dbt_tmp` của dbt cũng vào schema đó (`trino__make_temp_relation`), MERGE chỉ lấy dòng đúng ngày | Query MERGE đọc `work_gold_<run>.ipv4_ipv6_paired_hourly__dbt_tmp`; sau khi chạy không còn bảng `%dbt_tmp%` nào; test đơn vị cho tên schema và luật dọn |
+| Dừng task Airflow không dừng query Trino | Client tag Trino riêng mỗi task (`TRINO_CLIENT_TAG`); `on_kill` chỉ hủy query mang tag đó | Hai lượt chạy song song: hủy theo tag B → B `USER_CANCELED`, C (crosscheck) vẫn PASS, schema tạm của B tự xóa. Chưa thử bằng cách giết task trong Airflow |
+| MERGE có thể INSERT lại dòng cờ xóa nếu khóa có NULL | `WHEN NOT MATCHED AND NOT s.dbt_delete_flag THEN INSERT` | Silver/Gold 20/11 chạy lại: 87.799 / 87.799 `result_id`, 263.133 / 263.133 `reply_id` |
 | `load_id` NULL lọt kiểm tra lô | `IS DISTINCT FROM` | `dbt parse`, Bronze chạy lại PASS |
 | Metric `ripe_iceberg_files_rewritten` đo hiệu số | Đếm file cũ bị thay (tập file trước − sau) | Chưa chạy `maintenance` thật |
 | `row_count` Gold là tổng cả ngày | Đếm theo measurement | `quality_hourly_target`: 8/measurement = 32 dòng |
