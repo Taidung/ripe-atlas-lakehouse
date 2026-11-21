@@ -1,8 +1,10 @@
 {# Macro dùng chung. Hằng số nghiệp vụ giống transformation/lakehouse/common.py. #}
 
 {% macro generate_schema_name(custom_schema_name, node) -%}
-    {#- Dùng đúng tên schema khai báo (bronze, silver, gold, work), không ghép tiền tố target. -#}
-    {{ custom_schema_name if custom_schema_name is not none else target.schema }}
+    {#- Dùng đúng tên schema khai báo (bronze, silver, gold, ops), không ghép tiền tố target. Bảng tạm (`work`) vào
+        schema riêng của lượt chạy, runner truyền qua var work_schema (lakehouse/trino_db.py::work_schema). -#}
+    {%- if custom_schema_name is none or custom_schema_name == 'work' -%}{{ var('work_schema', 'work') }}
+    {%- else -%}{{ custom_schema_name }}{%- endif -%}
 {%- endmacro %}
 
 {% macro report_tz() %}'Asia/Ho_Chi_Minh'{% endmacro %}

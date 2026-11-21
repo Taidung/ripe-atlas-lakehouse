@@ -144,3 +144,13 @@ def test_dbt_test_results_map_to_critical_and_warn():
     assert not dq.has_critical_failure(checks) and dq.has_warning(checks)
     assert checks[1]["model"] == json.loads(checks[1]["details"])["model"] == "fact_ping_result_candidate"
     assert dq.has_critical_failure(dq.from_dbt([_test("fail", "error")]))
+
+
+def test_maintenance_drops_only_stale_work_schemas():
+    from lakehouse.maintenance import stale_work_schemas
+    from lakehouse.trino_db import work_schema_name
+
+    now = datetime(2026, 11, 21, 12, tzinfo=UTC)
+    old, fresh = work_schema_name("silver-20261119T094018Z-0ebace4c"), work_schema_name("gold-20261121T110000Z-1a2b3c4d")
+    assert old == "work_silver_20261119t094018z_0ebace4c"
+    assert stale_work_schemas([old, fresh, "work", "work_misc"], now) == [old]

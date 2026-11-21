@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS staging.ripe_atlas.measurement_metadata_raw (
 -- ---------------------------------------------------------------- work (bảng tạm của runner)
 CREATE SCHEMA IF NOT EXISTS work;
 
--- Một dòng = một object staging thuộc manifest chưa nạp của lần chạy Bronze hiện tại (thay toàn bộ mỗi lần chạy).
+-- MẪU cột: mỗi lượt Bronze tạo bảng cùng cấu trúc trong schema tạm của nó (CREATE TABLE ... (LIKE ...)).
+-- Một dòng = một object staging thuộc manifest chưa nạp của lượt chạy.
 CREATE TABLE IF NOT EXISTS work.bronze_pending_object (
   entity varchar, manifest_path varchar, source_object varchar,
   window_date varchar, window_hour varchar, msm_id varchar, part_ictrl_dt varchar,

@@ -37,6 +37,7 @@ INGEST_ENV = [
 ]
 TRANSFORM_ENV = ["S3_PROCESSING_ACCESS_KEY", "S3_PROCESSING_SECRET_KEY", "PUSHGATEWAY_URL"]
 TRANSFORM_FIXED_ENV = {"TRINO_HOST": "trino", "TRINO_PORT": "8080", "S3_ENDPOINT": "http://s3:8333"}
+TRINO_URL = "http://trino:8080"
 
 
 def overlap_hours() -> int:
@@ -143,6 +144,19 @@ class TransformOperator(DockerJobOperator):
                 f"lakehouse {self.command}: partition bị chặn vì lỗi chất lượng critical (exit 2); xem ops.dq_result"
             )
         super().on_exit_code(code)
+
+    def on_kill(self):
+        """Dừng container chưa đủ: query đã gửi vẫn chạy trên Trino và có thể ghi tiếp sau khi pool đã nhả slot.
+        shortcut: hủy MỌI query đang chạy của user `transform` (pool lakehouse_writer chỉ cho một task ghi một lúc);
+        nếu sau này có nhiều luồng transform song song thì gắn tag riêng cho query của từng task."""
+        super().on_kill()
+        import requests
+
+        headers = {"X-Trino-User": "transform"}
+        for q in requests.get(f"{TRINO_URL}/v1/query", headers=headers, timeout=10).json():
+            if q["session"]["user"] == "transform" and q["state"] not in ("FINISHED", "FAILED"):
+                self.log.warning("cancel Trino query %s (%s)", q["queryId"], q["state"])
+                requests.delete(f"{TRINO_URL}/v1/query/{q['queryId']}", headers=headers, timeout=10)
 
 
 def vn_date(run_after: datetime, offset_days: int = 0) -> str:

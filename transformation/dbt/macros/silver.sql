@@ -70,15 +70,6 @@ SELECT
     {{ open_end_ts() }}, true, {{ epoch_ts() }}, 'unknown_member', CAST(-1 AS bigint), true
 {%- endmacro %}
 
-{% macro delete_day_if_exists() -%}
-    {#- pre_hook của bảng ghi theo ngày: xóa partition ngày đang tính (kể cả khi kết quả mới rỗng). -#}
-    {%- set rel = adapter.get_relation(this.database, this.schema, this.identifier) -%}
-    {%- if rel is not none -%}
-        DELETE FROM {{ this }} WHERE ictrl_dt = {{ day_literal() }}
-    {%- else -%}
-        SELECT 1
-    {%- endif -%}
-{%- endmacro %}
 
 
 {% macro parse_replies(json_col) -%}

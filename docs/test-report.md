@@ -190,3 +190,17 @@ Khác biệt có chủ đích so với bản Spark:
 - Khoá thay thế `probe_sk`/`measurement_sk` dùng `xxhash64` của Trino nên khác giá trị cũ; mọi ngày đã được tính lại.
 - JSON: Trino `try_cast` chấp nhận số dạng chuỗi (`"prb_id":"12"`), Spark trước đó coi là corrupt (`docs/data-contracts.md`).
 - Không còn container Spark chạy thường trực; đổi lại Trino là service core và gánh cả biến đổi.
+
+### 6.1 Sửa sau review (2026-11-21)
+
+| Vấn đề | Sửa | Kiểm chứng |
+|---|---|---|
+| Ghi lại một ngày = xóa rồi chèn (2 commit): lỗi giữa chừng để lại ngày trống | Chiến lược `replace_day`: một `MERGE` mỗi bảng | Mỗi bảng tăng đúng 1 snapshot (20 → 21, `overwrite`); dòng cũ không còn trong bản mới bị xóa (chèn dòng giả trên nhánh `dqtest` → 0 sau khi chạy Gold); không trùng khóa (87.799 / 87.799 `result_id`) |
+| Bảng tạm dùng chung: chạy tay song song có thể đè nhau | Schema tạm `work_<run_id>` mỗi lượt, xóa khi xong; `maintenance` dọn bản sót | Sau khi chạy chỉ còn schema `work` (bảng mẫu); test đơn vị cho tên schema và luật dọn |
+| Dừng task Airflow không dừng query Trino | `TransformOperator.on_kill` hủy query đang chạy của user `transform` qua REST `/v1/query` | Chưa thử bằng cách giết task thật |
+| `load_id` NULL lọt kiểm tra lô | `IS DISTINCT FROM` | `dbt parse`, Bronze chạy lại PASS |
+| Metric `ripe_iceberg_files_rewritten` đo hiệu số | Đếm file cũ bị thay (tập file trước − sau) | Chưa chạy `maintenance` thật |
+| `row_count` Gold là tổng cả ngày | Đếm theo measurement | `quality_hourly_target`: 8/measurement = 32 dòng |
+
+Sau các sửa: Bronze nạp lại 0 dòng mới, Silver/Gold 20/11 công bố, crosscheck PASS (0,95%), `dq_block_on_branch.sh` PASS, 75 unit test PASS.
+

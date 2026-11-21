@@ -1,16 +1,16 @@
 {{ config(
     materialized='incremental',
-    incremental_strategy='append',
+    incremental_strategy='replace_day',
+    unique_key=['result_id'],
     tags=['silver_facts_publish'],
-    pre_hook="{{ delete_day_if_exists() }}",
     properties={
         'partitioning': "ARRAY['ictrl_dt', 'measurement_id']",
         'sorted_by': "ARRAY['probe_id', 'event_ts']",
         'format_version': '2',
     },
 ) }}
-{#- Một dòng = một lần ping (thường 3 gói) của một probe tới một target. Ghi lại cả ngày (var day): xóa partition ngày
-    rồi chèn từ bản đã qua kiểm tra. Runner chỉ chạy model này khi không có lỗi critical. -#}
+{#- Một dòng = một lần ping (thường 3 gói) của một probe tới một target. Ghi lại cả ngày (var day) từ bản đã qua kiểm tra
+    bằng một MERGE (macros/publish.sql). Runner chỉ chạy model này khi không có lỗi critical. -#}
 SELECT
     result_id, measurement_id, af, target, probe_id, event_ts, event_time, event_hour_utc, ictrl_dt, date_key, time_key,
     packets_sent, packets_received, packets_lost, duplicate_count_src, result_status, has_response,

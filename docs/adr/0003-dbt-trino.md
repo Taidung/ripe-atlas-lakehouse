@@ -39,5 +39,6 @@
 - Mất: Data Docs của GX, giao diện OpenMetadata (owner, glossary, lineage tới dashboard Superset).
 - Test logic dữ liệu cần Trino: unit test offline chỉ còn cho runner; logic SQL được bảo vệ bằng dbt test chạy mỗi lần
   build, `crosscheck` và `dq_block_on_branch.sh`. Chưa có dbt unit test với fixture.
-- Ghi nhiều commit cho một lần công bố (xóa ngày rồi chèn): chấp nhận được vì tầng sau đọc snapshot đã công bố, không đọc
-  bản mới nhất.
+- Ghi một ngày của một bảng bằng một `MERGE` (chiến lược dbt tùy biến `replace_day`) = một commit, tương đương
+  `overwritePartitions` của bản Spark. Giữa các bảng vẫn là nhiều commit, như bản Spark; tầng sau đọc snapshot đã công bố.
+- Mỗi lượt chạy có schema tạm riêng `work_<run_id>`, nên lệnh chạy tay ngoài pool Airflow không đè bảng tạm của lượt khác.

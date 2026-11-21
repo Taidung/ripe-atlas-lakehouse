@@ -17,7 +17,7 @@ WHERE e.expected_rows <> coalesce(g.got_rows, 0)
 {% test load_id_matches_manifest(model) %}
 SELECT source_object, dlt_load_id, expected_load_id, count(*) AS n
 FROM {{ model }}
-WHERE dlt_load_id IS NULL OR dlt_load_id <> expected_load_id
+WHERE dlt_load_id IS DISTINCT FROM expected_load_id
 GROUP BY 1, 2, 3
 {% endtest %}
 

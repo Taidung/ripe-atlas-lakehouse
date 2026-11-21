@@ -41,7 +41,7 @@ models:
 
 seeds:
   ripe_lakehouse:
-    +schema: work
+    +schema: ops
 
 data_tests:
   ripe_lakehouse:

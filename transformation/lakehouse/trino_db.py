@@ -6,6 +6,9 @@ Dữ liệu lớn KHÔNG đi qua Python: biến đổi nằm trong dbt; runner c
 from __future__ import annotations
 
 import os
+import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -74,3 +77,20 @@ def insert_rows(db: Trino, table: str, rows: list[dict[str, Any]], chunk: int = 
         batch = rows[i : i + chunk]
         values = ",\n".join("(" + ", ".join(map(sql_str, r.values())) + ")" for r in batch)
         db.execute(f"INSERT INTO {table} ({', '.join(batch[0])}) VALUES\n{values}")
+
+
+def work_schema_name(run_id: str) -> str:
+    return "work_" + re.sub(r"\W", "_", run_id).lower()
+
+
+@contextmanager
+def work_schema(db: Trino, run_id: str) -> Iterator[str]:
+    """Schema tạm riêng của một lượt chạy (bảng nháp, bảng kiểm tra, object đang chờ): hai lượt chạy đồng thời, kể cả
+    lệnh chạy tay ngoài pool Airflow, không ghi đè bảng tạm của nhau. Xóa khi xong; bản sót lại do job bị giết được
+    `python -m lakehouse maintenance` dọn."""
+    name = work_schema_name(run_id)
+    db.execute(f"CREATE SCHEMA {name}")
+    try:
+        yield name
+    finally:
+        db.execute(f"DROP SCHEMA IF EXISTS {name} CASCADE")

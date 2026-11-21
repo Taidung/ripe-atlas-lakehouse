@@ -24,7 +24,7 @@ from lakehouse.common import SQL_DIR, add_day_args, iso_z, log_event, new_run_id
 from lakehouse.dbt_runner import dbt
 from lakehouse.dq import CRITICAL, DqRecorder, failed_names, from_dbt, has_critical_failure, has_warning, make_check
 from lakehouse.publication import PartitionStatus, push_partition_days, set_partition_status
-from lakehouse.trino_db import Trino
+from lakehouse.trino_db import Trino, work_schema
 
 FACT = "nessie.silver.fact_ping_result"
 REPLY = "nessie.silver.fact_ping_reply"
@@ -57,8 +57,8 @@ def build_dimensions(db: Trino, dq: DqRecorder, variables: dict) -> None:
 
 
 # ---------------------------------------------------------------------------- 2-4. một ngày
-def build_day(db: Trino, day: date, run_id: str, dq: DqRecorder) -> str:
-    variables = {"day": str(day), "run_id": run_id, "run_ts": iso_z(utc_now())}
+def build_day(db: Trino, ws: str, day: date, run_id: str, dq: DqRecorder) -> str:
+    variables = {"day": str(day), "run_id": run_id, "run_ts": iso_z(utc_now()), "work_schema": ws}
     if not db.scalar(f"SELECT count(*) FROM bronze.ping_result_raw WHERE ictrl_dt = {sql_str(day)}"):
         log_event("silver", "day_empty", ictrl_dt=str(day))
         return "empty"
@@ -69,7 +69,7 @@ def build_day(db: Trino, day: date, run_id: str, dq: DqRecorder) -> str:
     checks = from_dbt(run.tests())
     reply_checks = [c for c in checks if c["model"] == "fact_ping_reply_candidate"]
     fact_checks = [c for c in checks if c not in reply_checks]  # gồm cả test đối soát nhiều bảng
-    fact_counts = _counts(db, "work.fact_ping_result_candidate", day)
+    fact_counts = _counts(db, f"{ws}.fact_ping_result_candidate", day)
     scope, now = f"ictrl_dt={day}", utc_now()
 
     if has_critical_failure(checks):
@@ -100,7 +100,7 @@ def build_day(db: Trino, day: date, run_id: str, dq: DqRecorder) -> str:
     dq.write("silver", REPLY, scope, reply_checks, reply_snapshot)
 
     # Công bố. Nếu kiểm tra sau ghi sai, bản vừa ghi KHÔNG được công bố: Gold vẫn đọc snapshot công bố trước đó.
-    reply_counts = _counts(db, "work.fact_ping_reply_candidate", day)
+    reply_counts = _counts(db, f"{ws}.fact_ping_reply_candidate", day)
     if not post_write["success"]:
         status, reason = "blocked", f"post-write count mismatch at snapshot {fact_snapshot}; not published"
         fact_snapshot = reply_snapshot = None
@@ -168,12 +168,13 @@ def run(args, m) -> int:
     run_id = new_run_id("silver")
     dq = DqRecorder(db, run_id)
     try:
-        build_dimensions(db, dq, {"run_id": run_id, "run_ts": iso_z(utc_now())})
-        if args.dims_only:
-            return 0
-        days = days_needing_repair(db) if args.repair_unknown else selected_days(args)
-        log_event("silver", "run_start", run_id=run_id, days=[str(d) for d in days])
-        results = {str(d): build_day(db, d, run_id, dq) for d in days}
+        with work_schema(db, run_id) as ws:
+            build_dimensions(db, dq, {"run_id": run_id, "run_ts": iso_z(utc_now()), "work_schema": ws})
+            if args.dims_only:
+                return 0
+            days = days_needing_repair(db) if args.repair_unknown else selected_days(args)
+            log_event("silver", "run_start", run_id=run_id, days=[str(d) for d in days])
+            results = {str(d): build_day(db, ws, d, run_id, dq) for d in days}
         log_event("silver", "run_finished", run_id=run_id, results=results)
         push_run_metrics(db, m, results, days)
         return 0 if "blocked" not in results.values() else 2

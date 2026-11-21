@@ -32,7 +32,7 @@ from lakehouse.publication import (
     readable_measurements,
     set_partition_status,
 )
-from lakehouse.trino_db import Trino
+from lakehouse.trino_db import Trino, work_schema
 
 SILVER_FACT = "nessie.silver.fact_ping_result"
 SILVER_REPLY = "nessie.silver.fact_ping_reply"
@@ -53,8 +53,8 @@ def ensure_probe_set_seed(db: Trino) -> None:
     with (DBT_DIR / "seeds" / "probe_set_member.csv").open(encoding="utf-8") as f:
         expected = Counter(row["probe_set_version"] for row in csv.DictReader(f))
     current = (
-        dict(db.query("SELECT probe_set_version, count(*) FROM work.probe_set_member GROUP BY 1"))
-        if db.table_exists("work.probe_set_member")
+        dict(db.query("SELECT probe_set_version, count(*) FROM ops.probe_set_member GROUP BY 1"))
+        if db.table_exists("ops.probe_set_member")
         else {}
     )
     if current != dict(expected):
@@ -63,9 +63,9 @@ def ensure_probe_set_seed(db: Trino) -> None:
             raise RuntimeError("dbt seed probe_set_member thất bại")
 
 
-def mart_counts(db: Trino, mart: str) -> dict[int, int]:
+def mart_counts(db: Trino, ws: str, mart: str) -> dict[int, int]:
     """measurement_id -> số dòng của mart nháp; một cặp IPv4/IPv6 tính cho cả hai measurement của cặp."""
-    source = f"work.{mart}_candidate"
+    source = f"{ws}.{mart}_candidate"
     if mart == "ipv4_ipv6_paired_hourly":
         source += " CROSS JOIN UNNEST(ARRAY[measurement_id_v4, measurement_id_v6]) AS t(measurement_id)"
     return dict(db.query(f"SELECT measurement_id, count(*) FROM {source} GROUP BY 1"))
@@ -82,7 +82,7 @@ def mark_marts_blocked(db: Trino, day: date, measurement_ids: list[int], status:
     set_partition_status(db, rows)
 
 
-def build_day(db: Trino, day: date, run_id: str, dq: DqRecorder) -> str:
+def build_day(db: Trino, ws: str, day: date, run_id: str, dq: DqRecorder) -> str:
     silver_status = partition_statuses(db, SILVER_FACT, day)
     readable = readable_measurements(db, SILVER_FACT, day)
     log_event("gold", "day_start", ictrl_dt=str(day), silver_status=silver_status, readable=readable)
@@ -102,6 +102,7 @@ def build_day(db: Trino, day: date, run_id: str, dq: DqRecorder) -> str:
         "day": str(day),
         "run_id": run_id,
         "run_ts": iso_z(utc_now()),
+        "work_schema": ws,
         "measurement_ids": readable,
         "fact_snapshot": pinned[SILVER_FACT],
         "reply_snapshot": pinned[SILVER_REPLY],
@@ -125,7 +126,7 @@ def build_day(db: Trino, day: date, run_id: str, dq: DqRecorder) -> str:
     if not publish.success:
         raise RuntimeError(f"{day}: dbt lỗi khi ghi Gold: {[n.name for n in publish.errors()]}")
     snapshots = {k: db.latest_snapshot(f"gold.{k}") for k in MARTS}
-    counts = {k: mart_counts(db, k) for k in MARTS}
+    counts = {k: mart_counts(db, ws, k) for k in MARTS}
     dq.write("gold", "nessie.gold.*", scope, checks, snapshots["quality_hourly_target"])
 
     status = "published_with_warnings" if has_warning(checks) else "published"
@@ -207,7 +208,8 @@ def run(args, m) -> int:
     days = selected_days(args)
     dq = DqRecorder(db, run_id)
     try:
-        results = {str(d): build_day(db, d, run_id, dq) for d in days}
+        with work_schema(db, run_id) as ws:
+            results = {str(d): build_day(db, ws, d, run_id, dq) for d in days}
         log_event("gold", "run_finished", run_id=run_id, results=results)
         push_partition_days(m, "gold", results, ("published", "published_with_warnings", "blocked", "blocked_upstream"))
         push_freshness(db, m)

@@ -78,7 +78,7 @@ def run(args, m) -> int:
     metrics = json.loads((CONFIG_DIR / "metrics.json").read_text(encoding="utf-8"))
     day = args.date
     cohort = f"""
-        JOIN work.probe_set_member m ON m.af = f.af AND m.probe_id = f.probe_id
+        JOIN ops.probe_set_member m ON m.af = f.af AND m.probe_id = f.probe_id
         JOIN (SELECT DISTINCT probe_set_version AS v, measurement_id, window_start AS event_hour_utc
               FROM bronze.ingest_manifest
               WHERE entity = 'ping_result_raw' AND bronze_status = 'loaded' AND ictrl_dt = DATE '{day}') i

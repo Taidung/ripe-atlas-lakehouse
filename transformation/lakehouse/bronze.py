@@ -6,7 +6,7 @@
 Luồng:
   1. Liệt kê manifest status=complete trong phạm vi (giờ của --start/--end; metadata: --lookback-days ngày gần nhất).
   2. Bỏ manifest đã có trong bronze.ingest_manifest (bronze_status=loaded), trừ khi --reprocess.
-  3. Ghi danh sách object của manifest đang chờ vào work.bronze_pending_object; đăng ký partition staging tương ứng.
+  3. Ghi danh sách object của manifest đang chờ vào <schema tạm>.bronze_pending_object; đăng ký partition staging.
   4. dbt build --select tag:bronze_<entity>: bảng kiểm tra tạm -> test lô (số dòng, load_id, tỷ lệ quarantine)
      -> bronze.<entity> (chỉ chèn record_uid chưa có) và bronze.quarantine. Test lỗi -> không ghi gì, job thất bại.
   5. Ghi nhật ký bronze.ingest_manifest (một dòng mỗi manifest, append-only).
@@ -37,12 +37,11 @@ from lakehouse.common import (
     utc_now,
 )
 from lakehouse.dbt_runner import dbt
-from lakehouse.trino_db import Trino, insert_rows
+from lakehouse.trino_db import Trino, insert_rows, work_schema
 
 RESULTS = "ping_result_raw"
 METADATA_ENTITIES = ("probe_metadata_raw", "measurement_metadata_raw")
 MANIFEST_TABLE = "bronze.ingest_manifest"
-PENDING_TABLE = "work.bronze_pending_object"
 ROW_KINDS = ("read", "valid", "inserted", "already_present", "quarantined")
 
 
@@ -113,7 +112,7 @@ def object_partition(path: str) -> dict[str, str]:
 
 
 def pending_rows(entity: str, manifests: list[dict]) -> list[dict[str, Any]]:
-    """Một dòng work.bronze_pending_object mỗi object: partition staging + thông tin manifest để kiểm tra bản ghi."""
+    """Một dòng bronze_pending_object mỗi object: partition staging + thông tin manifest để kiểm tra bản ghi."""
     rows = []
     for m in manifests:
         start, end = _instant(m.get("window_start")), _instant(m.get("window_end"))
@@ -159,14 +158,14 @@ def register_partitions(db: Trino, entity: str, rows: list[dict]) -> int:
 
 
 # ---------------------------------------------------------------------------- ghi
-def row_stats(db: Trino, entity: str, manifests: list[dict], run_id: str) -> dict[str, dict[str, int]]:
+def row_stats(db: Trino, ws: str, entity: str, manifests: list[dict], run_id: str) -> dict[str, dict[str, int]]:
     """manifest_path -> số dòng read / valid / inserted / already_present / quarantined của lần chạy này."""
     checked = {
         r["manifest_path"]: r
         for r in db.dicts(
             f"SELECT manifest_path, count(*) AS read, count_if(reason IS NULL AND dedup_rank = 1) AS valid, "
             f"count(DISTINCT CASE WHEN reason IS NOT NULL THEN quarantine_uid END) AS quarantined "
-            f"FROM work.bronze_checked_{entity} GROUP BY 1"
+            f"FROM {ws}.bronze_checked_{entity} GROUP BY 1"
         )
     }
     days = ", ".join(sorted({sql_str(_day(m)) for m in manifests}))
@@ -231,17 +230,18 @@ def process(db: Trino, entity: str, manifests: list[dict], max_quarantine_ratio:
     with_objects = [m for m in manifests if m["objects"]]
     stats: dict[str, dict] = {}
     if with_objects:
-        rows = pending_rows(entity, with_objects)
-        db.execute(f"DELETE FROM {PENDING_TABLE}")
-        insert_rows(db, PENDING_TABLE, rows)
-        registered = register_partitions(db, entity, rows)
-        log_event("bronze", "pending_objects", entity=entity, manifests=len(with_objects), objects=len(rows), partitions_new=registered)
-        variables = {"entity": entity, "run_id": run_id, "run_ts": iso_z(loaded_at), "max_quarantine_ratio": max_quarantine_ratio}
-        run = dbt("build", f"tag:bronze_{entity}", variables)
-        if not run.success:
-            failed = [f"{n.name}: {n.status}" for n in run.nodes if n.status in ("error", "fail")]
-            raise RuntimeError(f"Bronze {entity}: kiểm tra lô thất bại hoặc dbt lỗi, không ghi gì: {failed}")
-        stats = row_stats(db, entity, with_objects, run_id)
+        with work_schema(db, run_id) as ws:
+            rows = pending_rows(entity, with_objects)
+            db.execute(f"CREATE TABLE {ws}.bronze_pending_object (LIKE work.bronze_pending_object)")
+            insert_rows(db, f"{ws}.bronze_pending_object", rows)
+            registered = register_partitions(db, entity, rows)
+            log_event("bronze", "pending_objects", entity=entity, manifests=len(with_objects), objects=len(rows), partitions_new=registered)
+            variables = {"entity": entity, "run_id": run_id, "run_ts": iso_z(loaded_at), "max_quarantine_ratio": max_quarantine_ratio}
+            run = dbt("build", f"tag:bronze_{entity}", {**variables, "work_schema": ws})
+            if not run.success:
+                failed = [f"{n.name}: {n.status}" for n in run.nodes if n.status in ("error", "fail")]
+                raise RuntimeError(f"Bronze {entity}: kiểm tra lô thất bại hoặc dbt lỗi, không ghi gì: {failed}")
+            stats = row_stats(db, ws, entity, with_objects, run_id)
 
     # Audit append-only: mỗi lần xử lý một manifest là một dòng (khóa manifest_path + bronze_run_id),
     # nên --reprocess không ghi đè lịch sử của lần nạp đầu.

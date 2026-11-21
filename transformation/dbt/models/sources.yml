@@ -5,7 +5,7 @@ sources:
     description: >
       File .jsonl.gz do ingestion (dlt) ghi trên s3://staging/ripe_atlas, đọc qua catalog Hive `staging`.
       Bảng ngoài + partition theo thư mục; runner chỉ đăng ký partition của manifest đang xử lý
-      (DDL: transformation/sql/staging.sql).
+      (DDL: transformation/sql/ops.sql).
     database: staging
     schema: ripe_atlas
     tables:
@@ -17,9 +17,9 @@ sources:
         description: Một dòng = một snapshot metadata measurement (partition ictrl_dt).
 
   - name: runner
-    description: Bảng do runner ghi trước khi gọi dbt (DDL transformation/sql/ops.sql).
+    description: Bảng runner ghi vào schema tạm của lượt chạy trước khi gọi dbt (mẫu DDL work.* trong transformation/sql/ops.sql).
     database: "{{ env_var('LAKEHOUSE_CATALOG', 'lakehouse') }}"
-    schema: work
+    schema: "{{ var('work_schema', 'work') }}"
     tables:
       - name: bronze_pending_object
         description: >
