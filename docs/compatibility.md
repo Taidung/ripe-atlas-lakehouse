@@ -1,5 +1,14 @@
 # Compatibility matrix
 
+> **Cập nhật 2026-11-21:** Spark, GX Core và OpenMetadata đã bị bỏ (ADR-0003). Các dòng về chúng bên dưới là lịch sử.
+> Phiên bản hiện dùng cho tầng biến đổi:
+>
+> | Thành phần | Phiên bản | Trạng thái |
+> |---|---|---|
+> | dbt-core / dbt-trino / trino (Python client) | 1.12.7 / 1.12.0 / 0.340.0 (uv.lock, nhóm `transform`) | **Đã kiểm chứng** trên dữ liệu thật, `docs/test-report.md` §6 |
+> | Trino | 484: Iceberg connector (`catalog.type=nessie`) ghi + đọc, Hive connector (metastore file) đọc `.jsonl.gz` staging, `register_partition`, `MERGE`, `FOR VERSION AS OF`, phân quyền file | **Đã kiểm chứng** |
+> | Image transform | `python:3.11-slim` (pin digest) + uv, 762 MB | Đã build và chạy |
+
 Cập nhật: 2026-11-19 (giai đoạn 1).
 
 Quy ước trạng thái:

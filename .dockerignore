@@ -8,3 +8,5 @@
 **/.dlt/state
 **/.dlt/data
 docs
+**/dbt/target
+**/dbt/logs

@@ -14,7 +14,7 @@ flowchart LR
   B --> C[(staging/ripe_atlas/ping_result_raw/...)]
   B --> D[hash index .tsv.gz]
   D --> E[manifest .json status=complete]
-  E -->|chỉ object trong manifest| F[Spark bronze_ingest]
+  E -->|chỉ object trong manifest| F[runner bronze + dbt trên Trino]
   F -->|MERGE theo record_uid| G[(bronze.ping_result_raw)]
   F --> H[(bronze.quarantine)]
   F --> I[(bronze.ingest_manifest)]
@@ -79,7 +79,7 @@ flowchart LR
 | Lỗi HTTP sau hết số lần retry | Không có object, không có manifest | Lần chạy sau làm lại cửa sổ |
 | dlt ghi được object nhưng thất bại trước khi ghi manifest | Object mồ côi, không manifest nào tham chiếu | Downstream bỏ qua; lần sau stage lại (test `test_failed_load_leaves_no_manifest`); dọn object mồ côi theo §5 |
 | Đã ghi manifest nhưng Bronze chưa chạy | Manifest ở trạng thái chờ | Bronze lần sau tự nhận |
-| Hai run cùng xử lý một cửa sổ | Có thể stage cùng nội dung hai lần | Bronze khử trùng theo `record_uid`, giữ bản `fetched_at` sớm nhất (test Spark) |
+| Hai run cùng xử lý một cửa sổ | Có thể stage cùng nội dung hai lần | Bronze khử trùng theo `record_uid`, giữ bản `fetched_at` sớm nhất (`dedup_rank` trong `bronze_checked_*`) |
 
 ## 3. Bronze (namespace `nessie.bronze`)
 
@@ -118,7 +118,7 @@ flowchart LR
 |---|---|
 | `invalid_utf8` | Dòng nguồn không phải UTF-8 hợp lệ |
 | `hash_mismatch` | `sha2(raw_json) ≠ raw_sha256` |
-| `malformed_json` | Không parse được, hoặc sai kiểu. Spark PERMISSIVE coi `"prb_id":"12"` là corrupt (đã kiểm chứng bằng test) |
+| `malformed_json` | Không parse được, hoặc không phải object JSON. Khóa sai kiểu (vd `"prb_id":"x"`) không ép được sang số thì thành `missing_key`; `"prb_id":"12"` (số dạng chuỗi) được Trino `try_cast` chấp nhận, khác bản Spark trước đó vốn coi là corrupt |
 | `missing_key` | Thiếu `msm_id`, `prb_id`, `timestamp` hoặc `af` |
 | `wrong_measurement` | `msm_id` khác measurement đã gọi |
 | `af_mismatch` | `af` khác af của measurement |

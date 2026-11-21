@@ -12,7 +12,7 @@ qua Trino ngày 2026-11-20: 20 bảng, 433 cột. Quy tắc chi tiết nằm ở
 | Quy ước | Ý nghĩa |
 |---|---|
 | **Kiểu** | Kiểu như Trino hiển thị. `timestamptz` = `timestamp(6) with time zone`, lưu UTC. `timestamp` (không múi giờ) chỉ dùng cho giờ địa phương VN |
-| **Null** | `có` = cột có thể NULL. Bảng Gold do Spark tạo từ DataFrame nên mọi cột đều khai báo nullable; các cột khoá thực tế luôn có giá trị |
+| **Null** | `có` = cột có thể NULL. Bảng Bronze/Silver/Gold do dbt tạo bằng `CREATE TABLE AS` nên mọi cột đều khai báo nullable; các cột khoá thực tế luôn có giá trị (dbt test `not_null`) |
 | **Giờ VN** | Asia/Ho_Chi_Minh (UTC+7). `ictrl_dt` = **ngày theo giờ VN** của sự kiện, dùng làm partition |
 | **measurement** | `1001` IPv4→K-root, `1004` IPv4→F-root, `2001` IPv6→K-root, `2004` IPv6→F-root |
 | **`af`** | Address family: `4` (IPv4) hoặc `6` (IPv6) |
@@ -412,8 +412,8 @@ Mọi kết quả kiểm tra chất lượng, cả đạt lẫn không đạt.
 | `dq_run_id`, `pipeline_run_id` | varchar | không | Lần kiểm tra, lần chạy pipeline |
 | `layer`, `table_name` | varchar | không | Bảng được kiểm tra |
 | `partition_scope` | varchar | không | Phạm vi, ví dụ `ictrl_dt=2026-11-19` |
-| `check_name` | varchar | không | Tên kiểm tra: expectation GX kèm tham số, hoặc kiểm tra Spark như `reconcile:bronze_keys_eq_fact_rows` |
-| `engine` | varchar | không | `gx-<phiên bản>` hoặc `spark` |
+| `check_name` | varchar | không | Tên dbt test, vd `not_null_fact_ping_result_candidate_result_id`, `reconcile_bronze_keys_eq_fact_rows`; hoặc kiểm tra của runner như `post_write:row_count_matches` |
+| `engine` | varchar | không | `dbt-<phiên bản>` hoặc `runner` (dữ liệu trước 2026-11-21: `gx-<phiên bản>`, `spark`) |
 | `severity` | varchar | không | `critical` (lỗi thì chặn công bố) hoặc `warn` (vẫn công bố, kèm cảnh báo) |
 | `success` | boolean | không | Đạt hay không |
 | `observed_value` | varchar | có | Giá trị quan sát |

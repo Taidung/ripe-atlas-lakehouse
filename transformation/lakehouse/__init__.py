@@ -1,1 +1,1 @@
-"""Thư viện dùng chung cho các job Spark của đồ án (Bronze/Silver/Gold)."""
+"""Runner biến đổi của đồ án (python -m lakehouse): điều phối dbt trên Trino cho Bronze/Silver/Gold."""

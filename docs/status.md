@@ -440,6 +440,19 @@ Nessie trước thời điểm dọn). Giữ lại: `_manifests`, `_index`, `_pr
 Ghi chú khi làm lại: `remove_orphan_files` không cho ngưỡng dưới 24 giờ, và cần
 `--conf spark.hadoop.fs.s3.impl=org.apache.hadoop.fs.s3a.S3AFileSystem` vì vị trí bảng dùng scheme `s3://`.
 
+## Phiên 2026-11-21: Chuyển tầng biến đổi sang dbt + Trino (nhánh `feat/dbt-trino`)
+
+- Quyết định và lý do: `docs/adr/0003-dbt-trino.md`. Bỏ Spark, Great Expectations, OpenMetadata; `main` giữ bản Spark để demo.
+- Trino: thêm catalog `lakehouse` (ghi), `staging` (Hive, đọc `.jsonl.gz`), `lakehouse_dqtest` (nhánh test); phân quyền
+  theo user, chỉ `transform` được ghi. Identity S3 `atlas-spark` đổi tên `atlas-processing`.
+- dbt project `transformation/dbt` (Bronze/Silver/Gold + test); runner `python -m lakehouse`; image `ripe-atlas-transform`.
+- Airflow: `TransformOperator` chạy container transform thay `docker exec spark-submit`.
+- Kiểm chứng (`docs/test-report.md` §6): Bronze/Silver giống hệt Spark, Gold khớp tới sai số cộng số thực; crosscheck PASS
+  19, 20, 21/11; `dq_block_on_branch.sh` PASS; 73 unit test PASS; `dbt parse` OK. Silver/Gold mọi ngày đã tính lại.
+- Cài skill ponytail (`.claude/skills/ponytail/SKILL.md`, MIT) theo yêu cầu; refactor theo hướng tối giản.
+- DAG `ripe_atlas_backfill` chạy thật qua Airflow với `TransformOperator` (giờ 16:00Z ngày 20/11): 4/4 task success trong ≈ 2,5 phút.
+- Chưa làm: chạy `ci.yml`/`integration.yml` trên GitHub, đo một ngày ở chế độ analysis.
+
 ## Đối chiếu tiêu chí nghiệm thu cuối
 
 | Tiêu chí | Trạng thái |
@@ -447,10 +460,10 @@ Ghi chú khi làm lại: `remove_orphan_files` không cho ngưỡng dưới 24 g
 | Chạy được từ checkout sạch theo README | Mọi lệnh trong README đều đã chạy ở các phiên này. **Chưa thử trên một checkout hoàn toàn sạch**: `integration.yml` làm việc đó khi được chạy |
 | Ingest đủ 4 measurement theo phạm vi probe đã cấu hình | Đạt (dev và strat) |
 | Silver/Gold đúng grain, KPI đúng, test rerun/backfill đạt | Đạt (crosscheck PASS, checksum giống hệt, repair-unknown) |
-| Trino truy vấn được cùng dữ liệu Spark ghi | Đạt (smoke test, cùng snapshot) |
+| Trino truy vấn được cùng dữ liệu đã ghi | Đạt: từ 2026-11-21 chính Trino ghi (catalog `lakehouse`) và đọc (`nessie`), cùng snapshot Nessie |
 | Superset có dashboard hoạt động, filter và metric được đối chiếu | Đạt (10/10) |
-| GX tạo kết quả và chặn công bố khi lỗi critical | Đạt (nhánh Nessie tạm) |
-| OpenMetadata hiển thị metadata và lineage | Đạt ở giai đoạn 5 (kiểm tra qua API; chưa chụp ảnh UI). Sau refactor mới kiểm chứng phần đọc cấu hình, chưa chạy lại bản đầy đủ vì thiếu RAM |
+| Kiểm tra chất lượng chặn công bố khi lỗi critical | Đạt: GX (bản Spark) rồi dbt test (bản hiện tại), cả hai trên nhánh Nessie tạm |
+| Catalog hiển thị metadata và lineage | Bản Spark: OpenMetadata (giai đoạn 5). Bản hiện tại: dbt docs (đã generate + serve thử) |
 | Grafana có metric thật, cảnh báo đã thử | Đạt |
 | CI có workflow chạy được và có bằng chứng | Đạt cho `ci.yml`: run 44488710698 (commit 72ef623) xanh cả `lint-and-unit` và `spark-tests` trên GitHub. `integration.yml` chưa chạy |
 | Báo cáo chỉ dùng số đo thật | Đạt (`docs/test-report.md`) |

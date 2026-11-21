@@ -28,9 +28,9 @@ Các lệnh dưới đây chạy từ thư mục gốc repo. Trên Git Bash (Win
 - DAG mới **mặc định bị tạm dừng**. Bật bằng lệnh `docker compose exec airflow airflow dags unpause <dag_id>`.
 - Mọi task ghi lakehouse đi qua pool `lakehouse_writer` (1 slot), nên backfill và lịch chạy không ghi đồng thời.
 - Task Silver/Gold thất bại với mã thoát 2 nghĩa là **lỗi chất lượng critical**; task này không retry.
-- Mỗi job Spark và mỗi lệnh ingestion (`metadata`, `results`, `backfill`, `incremental`) nhận `--run-type`
+- Mỗi lệnh transform (`python -m lakehouse ...`) và mỗi lệnh ingestion (`metadata`, `results`, `backfill`, `incremental`) nhận `--run-type`
   (`scheduled`, `reconcile`, `backfill`, `repair`, `manual`). Không truyền thì: `incremental` = `scheduled`,
-  `backfill` = `backfill`, còn lại (kể cả `metadata` chạy tay) = `manual`. DAG luôn truyền rõ (operator Spark
+  `backfill` = `backfill`, còn lại (kể cả `metadata` chạy tay) = `manual`. DAG luôn truyền rõ (`TransformOperator`
   bắt buộc có `run_type`):
   - hourly: ingest, bronze_results, silver, gold = `scheduled`;
   - daily_metadata: ingest_metadata, bronze_metadata = `scheduled`; `silver_repair_unknown`, `gold_recent_days` = `repair`;
@@ -53,7 +53,7 @@ Các lệnh dưới đây chạy từ thư mục gốc repo. Trên Git Bash (Win
 ### Task Airflow lỗi `PermissionError: [Errno 13] Permission denied` khi gọi Docker
 
 Log có `DockerException: Error while fetching server API version ... Permission denied`: user `airflow` (uid 50000)
-không thuộc nhóm sở hữu `/var/run/docker.sock`, nên operator không chạy được container ingestion hay `spark-submit`.
+không thuộc nhóm sở hữu `/var/run/docker.sock`, nên operator không chạy được container ingestion hay transform.
 GID của socket khác nhau theo máy và có thể đổi sau khi Docker Desktop khởi động lại (đã gặp 0, rồi 1001 ngày 20/11).
 
 1. Xem GID hiện tại:
@@ -64,14 +64,15 @@ GID của socket khác nhau theo máy và có thể đổi sau khi Docker Deskto
 3. Kiểm tra: `docker compose exec airflow id` phải liệt kê GID đó trong `groups`.
 4. Task đang `up_for_retry` sẽ tự chạy lại; task đã `failed` thì Clear trong giao diện Airflow.
 
-### Task ingestion trong Airflow lỗi `ingestion exited with code 2`
+### Task ingestion/transform trong Airflow lỗi `exited with code 2`
 
-Mã 2 là lỗi tham số dòng lệnh. Airflow chạy ingestion bằng **code đóng sẵn trong image** `ripe-atlas-ingestion:0.2`, không
-đọc thư mục `ingestion/` trong repo (khác với Spark, vốn mount code trực tiếp). Sửa code ingestion mà chưa build lại image
-thì DAG có thể gọi tham số mà image cũ chưa biết (đã gặp ngày 20/11 với `--run-type`).
+Với ingestion, mã 2 là lỗi tham số dòng lệnh. Airflow chạy **code đóng sẵn trong image** `ripe-atlas-ingestion:0.2`
+và `ripe-atlas-transform:0.1`, không đọc thư mục `ingestion/`, `transformation/` trong repo. Sửa code mà chưa build lại image
+thì DAG có thể gọi tham số mà image cũ chưa biết (đã gặp ngày 20/11 với `--run-type`). Với transform silver/gold, mã 2
+nghĩa là lỗi chất lượng critical: xem mục [DQ critical](#ripe-dq-critical).
 
 ```bash
-docker compose --profile jobs build ingestion
+docker compose --profile jobs build ingestion transform
 ```
 
 Sau đó Clear task lỗi trong Airflow. **Mỗi lần sửa `ingestion/` hoặc `config/probe_sets/`, build lại image này.**
@@ -90,7 +91,7 @@ Sau đó Clear task lỗi trong Airflow. **Mỗi lần sửa `ingestion/` hoặc
    - **HTTP 4xx** (ví dụ 404 measurement): lỗi cấu hình, không retry được. Metric `ripe_api_requests{status_class="4xx"}`;
      body quá lớn là `too_large`, body không parse được là `invalid_body`.
    - **429/5xx/mạng** đã hết số lần retry: chờ, rồi chạy lại.
-   - **Spark mã 2:** xem mục [DQ critical](#ripe-dq-critical).
+   - **Transform mã 2:** xem mục [DQ critical](#ripe-dq-critical).
 4. Sau khi sửa: **Clear** task trong Airflow, hoặc chạy backfill cho các giờ bị lỡ.
 
    Vì manifest là checkpoint nên chỉ phần còn thiếu được làm lại, không sinh bản ghi trùng.
@@ -132,9 +133,10 @@ Sau đó Clear task lỗi trong Airflow. **Mỗi lần sửa `ingestion/` hoặc
   SELECT checked_at, table_name, partition_scope, check_name, observed_value, details
   FROM nessie.ops.dq_result WHERE NOT success AND severity = 'critical' ORDER BY checked_at DESC;
   ```
-- Mở Data Docs của GX: `artifacts/gx/gx/uncommitted/data_docs/local_site/index.html`.
+- Xem test và bảng liên quan trên dbt docs (`docs/governance.md`); SQL của test nằm ở `transformation/dbt/models/*/*.yml`,
+  `transformation/dbt/tests/`, `transformation/dbt/macros/tests.sql`.
 - Có thể tái hiện an toàn trên một nhánh Nessie, xem `tests/integration/dq_block_on_branch.sh`.
-- Sửa nguồn (logic hoặc dữ liệu), rồi chạy lại `silver_build.py --dates <ngày>`.
+- Sửa nguồn (logic hoặc dữ liệu), rồi chạy lại `docker compose --profile jobs run --rm transform silver --dates <ngày>`.
 
 <a id="ripe-disk-almost-full"></a>
 ### Đĩa dữ liệu Docker sắp đầy (warning)
@@ -187,20 +189,20 @@ SELECT reason, count(*) FROM nessie.bronze.quarantine WHERE reprocess_status = '
 Sửa logic, rồi chạy lại:
 
 ```bash
-docker compose exec spark-iceberg spark-submit /opt/app/transformation/jobs/bronze_ingest.py --entity ping_result_raw --start … --end … --reprocess
+docker compose --profile jobs run --rm transform bronze --entity ping_result_raw --start … --end … --reprocess
 ```
 
 ## Log
 
 - **Mọi service:** Docker driver `json-file`, xoay vòng 10 MB × 5 file (tối đa ~50 MB mỗi service; cấu hình `x-logging` trong `docker-compose.yaml`).
-- **Job ingestion và Spark:** mỗi sự kiện là một dòng JSON có `ts`, `stage`, `event`, `run_id`, `measurement_id`, cửa sổ, số đếm, `error`.
+- **Job ingestion và transform:** mỗi sự kiện là một dòng JSON có `ts`, `stage`, `event`, `run_id`, `measurement_id`, cửa sổ, số đếm, `error`.
 - **Log task Airflow:** volume `airflow_logs` (`/opt/airflow/logs`); DAG maintenance xóa file > 14 ngày.
 - **Chưa có log backend tập trung** (Loki/ELK); Prometheus **không** lưu log.
 
 Tra cứu:
 
 ```bash
-docker compose logs spark-iceberg | grep '"stage": "silver"'
+docker compose exec airflow bash -c "grep -rh '\"stage\": \"silver\"' /opt/airflow/logs"   # log của container transform nằm trong log task
 docker compose exec airflow bash -c "grep -rh '\"run_id\": \"<run_id>\"' /opt/airflow/logs"
 ```
 
@@ -209,7 +211,7 @@ docker compose exec airflow bash -c "grep -rh '\"run_id\": \"<run_id>\"' /opt/ai
 | Dữ liệu | Retention | Cơ chế |
 |---|---|---|
 | Staging (object, manifest, index) | Giữ để replay | Chỉ tự động xóa **object mồ côi** > 48 giờ (`python -m ingestion cleanup --apply`) |
-| Iceberg (Bronze/Silver/Gold/ops) | Giữ | Compaction hằng ngày (`iceberg_maintenance.py`) |
+| Iceberg (Bronze/Silver/Gold/ops) | Giữ | Compaction hằng ngày (`python -m lakehouse maintenance`: `ALTER TABLE ... EXECUTE optimize`) |
 | Prometheus | 15 ngày hoặc 2 GB | Cờ `--storage.tsdb.retention.*` |
 | Log container | 50 MB/service | json-file rotation |
 | Log task Airflow | 14 ngày | DAG maintenance |
@@ -233,7 +235,8 @@ docker compose exec airflow bash -c "grep -rh '\"run_id\": \"<run_id>\"' /opt/ai
 | Thành phần | Quyền |
 |---|---|
 | Ingestion | identity S3 `atlas-ingest`: chỉ đọc/ghi bucket `staging` |
-| Spark | `atlas-spark`: đọc `staging`, ghi `warehouse` |
-| Trino | `atlas-reader`: chỉ đọc `warehouse` (đã kiểm chứng: ghi bị từ chối) |
-| Airflow | Không giữ khóa S3 nào ngoài khóa ingestion để chuyển tiếp; Spark dùng khóa có sẵn trong container của nó |
+| Trino catalog `lakehouse`, `staging` | `atlas-processing`: đọc `staging`, ghi `warehouse`; chỉ user `transform` dùng được (`serving/trino/rules.json`) |
+| Trino catalog `nessie` | `atlas-reader`: chỉ đọc `warehouse` (đã kiểm chứng: ghi bị từ chối) |
+| Container transform | `atlas-processing` để liệt kê/đọc manifest trên staging |
+| Airflow | Chỉ giữ khóa ingestion và `atlas-processing` để chuyển tiếp cho container |
 | docker.sock mount vào Airflow | Quyền tương đương root trên Docker host; chỉ chấp nhận cho môi trường local (ADR-0002) |

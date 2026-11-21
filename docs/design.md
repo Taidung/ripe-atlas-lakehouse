@@ -1,11 +1,13 @@
 # Thiết kế tổng thể, giả định và tiêu chí nghiệm thu
 
-Trạng thái: **BẢN NHÁP v0.1 (2026-11-18)**. Các mục đánh dấu ❓ đang chờ chủ đồ án quyết định (xem `docs/status.md`).
+Trạng thái: **BẢN NHÁP v0.1 (2026-11-18)**, cập nhật 2026-11-21: tầng biến đổi chuyển từ Spark sang **dbt trên Trino**, bỏ
+Great Expectations (thay bằng dbt test) và OpenMetadata (thay bằng dbt docs), xem ADR-0003. Mục 1–3 theo kiến trúc hiện tại;
+mục 4–7 là khảo sát ban đầu, giữ lại để đối chiếu. Các mục đánh dấu ❓ đang chờ chủ đồ án quyết định (xem `docs/status.md`).
 
 ## 1. Phạm vi
 
 - Nguồn: đúng 4 built-in ping measurements **1001** (v4, K-root), **1004** (v4, F-root), **2001** (v6, K-root) và **2004** (v6, F-root). Metadata đã đối chiếu ở `docs/api-survey.md` §1.
-- Hằng số `measurement_id → (af, target)` được khai báo **một lần** trong config. Mỗi tầng kiểm tra lại với `dim_measurement`; nếu lệch thì GX báo critical.
+- Hằng số `measurement_id → (af, target)` được khai báo **một lần** trong config. Mỗi tầng kiểm tra lại với `dim_measurement`; nếu lệch thì dbt test báo critical.
 - Câu hỏi phân tích, người dùng và giới hạn suy luận: theo đề bài, tóm tắt trong `docs/requirements.md` (giai đoạn 1).
 - **Ngoài phạm vi:** băng thông, chất lượng dịch vụ Internet nói chung. Instance anycast chỉ được gán khi có bằng chứng từ dữ liệu; ping result **không** chứa định danh instance, nên ta **không** gán vị trí hay instance.
 
@@ -27,32 +29,32 @@ Trạng thái: **BẢN NHÁP v0.1 (2026-11-18)**. Các mục đánh dấu ❓ đ
 ```mermaid
 flowchart LR
   API[RIPE Atlas REST API] -->|dlt, jsonl.gz + manifest| STG[(SeaweedFS s3://staging)]
-  STG -->|Spark: staging_to_bronze| BR[(Iceberg bronze.*)]
-  BR -->|Spark: bronze_to_silver| SV[(Iceberg silver.* star schema)]
-  SV -->|Spark: silver_to_gold| GD[(Iceberg gold.*)]
-  GX{{GX Core checkpoints}} -.validate.-> BR & SV & GD
-  GD --> PUB[gold.publication_status]
+  STG -->|dbt trên Trino: catalog staging| BR[(Iceberg bronze.*)]
+  BR -->|dbt: silver models| SV[(Iceberg silver.* star schema)]
+  SV -->|dbt: gold models, đọc snapshot đã công bố| GD[(Iceberg gold.*)]
+  DT{{dbt test}} -.chặn công bố.-> BR & SV & GD
+  SV & GD --> PUB[ops.partition_status]
   subgraph Catalog
     NS[Nessie: table pointers & versions] --- PG[(Postgres)]
   end
   BR & SV & GD -. metadata .- NS
-  TR[Trino] -->|Iceberg connector, same Nessie| GD & SV
+  TR[Trino: catalog lakehouse ghi / nessie đọc] --> BR & SV & GD
   SS[Superset] --> TR
-  OM[OpenMetadata] -->|Trino connector + Superset connector + lineage API/OpenLineage| TR & SS
+  DOCS[dbt docs: catalog + lineage] -.- BR & SV & GD
   PROM[Prometheus] --> GF[Grafana]
   JOBS[Jobs] -->|Pushgateway| PROM
   AF[Airflow] -->|orchestrate| JOBS
 ```
 
-- **Nessie và OpenMetadata:** Nessie là *catalog kỹ thuật*. Nó giữ con trỏ tới metadata file mới nhất của mỗi bảng Iceberg, với commit và branch. Đây là điều kiện để Spark và Trino thấy cùng một snapshot. OpenMetadata là *catalog nghiệp vụ*: mô tả, owner, tag, glossary, chất lượng và lineage. Nó không tham gia đường ghi dữ liệu.
+- **Nessie và dbt docs:** Nessie là *catalog kỹ thuật*. Nó giữ con trỏ tới metadata file mới nhất của mỗi bảng Iceberg, với commit và branch; nhờ đó catalog ghi `lakehouse` và catalog đọc `nessie` của Trino thấy cùng một snapshot. dbt docs là *catalog nghiệp vụ*: mô tả, test và lineage sinh từ dự án dbt (`docs/governance.md`). Nó không tham gia đường ghi dữ liệu.
 - **Bucket** (giữ nguyên như repo): `staging` chứa dữ liệu thô dlt, manifest và artifact vận hành; `warehouse` chứa dữ liệu và metadata Iceberg. Tên bucket cấu hình qua `STAGING_BUCKET`, `WAREHOUSE_BUCKET`.
 - **Phân quyền S3** (đã có trong `storage/seaweedfs/s3.json` của repo, giữ nguyên):
 
   | Identity | Quyền |
   |---|---|
   | `atlas-ingest` | Ghi `staging` |
-  | `atlas-spark` | Đọc `staging`, ghi `warehouse` |
-  | `atlas-reader` | Chỉ đọc `warehouse` (dùng cho Trino) |
+  | `atlas-processing` | Đọc `staging`, ghi `warehouse` (Trino catalog `lakehouse`/`staging`, runner transform) |
+  | `atlas-reader` | Chỉ đọc `warehouse` (Trino catalog `nessie`) |
   | `storage-admin` | Tạo bucket |
 
 ## 4. Đánh giá tài nguyên và phạm vi chạy

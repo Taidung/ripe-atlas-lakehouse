@@ -1,0 +1,12 @@
+version: 2
+
+seeds:
+  - name: probe_set_member
+    description: >
+      Thành viên các probe set (cohort cố định): một dòng mỗi (probe_set_version, af, probe_id). Sinh từ
+      config/probe_sets/*.json bằng transformation/dbt/scripts/build_probe_set_seed.py.
+    config:
+      column_types:
+        probe_set_version: varchar
+        af: integer
+        probe_id: bigint

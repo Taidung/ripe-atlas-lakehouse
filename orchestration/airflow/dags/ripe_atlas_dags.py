@@ -20,7 +20,7 @@ from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import DAG, Param
 
 sys.path.insert(0, str(Path(__file__).parent))
-from ripe_atlas.operators import HourlyIngestionOperator, IngestionOperator, SparkJobOperator, utc_date, vn_date  # noqa: E402
+from ripe_atlas.operators import HourlyIngestionOperator, IngestionOperator, TransformOperator, utc_date, vn_date  # noqa: E402
 
 DEFAULTS = {
     "owner": "data-platform",
@@ -45,27 +45,27 @@ with DAG(
     dagrun_timeout=timedelta(minutes=55),
 ) as hourly:
     ingest = HourlyIngestionOperator(task_id="ingest_results", arguments=[], pool=API, execution_timeout=timedelta(minutes=30))
-    bronze = SparkJobOperator(
+    bronze = TransformOperator(
         task_id="bronze_results",
-        script="bronze_ingest.py",
+        command="bronze",
         arguments=["--entity", "ping_result_raw"],
         hourly_range=True,
         pool=WRITER,
         execution_timeout=timedelta(minutes=20),
         run_type="scheduled",
     )
-    silver = SparkJobOperator(
+    silver = TransformOperator(
         task_id="silver",
-        script="silver_build.py",
+        command="silver",
         hourly_range=True,
         pool=WRITER,
         execution_timeout=timedelta(minutes=30),
         retries=1,
         run_type="scheduled",
     )
-    gold = SparkJobOperator(
+    gold = TransformOperator(
         task_id="gold",
-        script="gold_build.py",
+        command="gold",
         hourly_range=True,
         pool=WRITER,
         execution_timeout=timedelta(minutes=30),
@@ -88,26 +88,26 @@ with DAG(
     meta = IngestionOperator(
         task_id="ingest_metadata", arguments=["metadata", "--run-type", "scheduled"], pool=API, execution_timeout=timedelta(minutes=20)
     )
-    meta_bronze = SparkJobOperator(
+    meta_bronze = TransformOperator(
         task_id="bronze_metadata",
-        script="bronze_ingest.py",
+        command="bronze",
         arguments=["--entity", "metadata"],
         pool=WRITER,
         execution_timeout=timedelta(minutes=20),
         run_type="scheduled",  # stage bronze_metadata chỉ có lần chạy này
     )
-    repair = SparkJobOperator(
+    repair = TransformOperator(
         task_id="silver_repair_unknown",
-        script="silver_build.py",
+        command="silver",
         arguments=["--repair-unknown"],
         pool=WRITER,
         execution_timeout=timedelta(minutes=60),
         retries=1,
         run_type="repair",  # không dùng chung group với Silver hằng giờ
     )
-    gold_recent = SparkJobOperator(
+    gold_recent = TransformOperator(
         task_id="gold_recent_days",
-        script="gold_build.py",
+        command="gold",
         arguments=["--dates", "{{ vn_date(dag_run.run_after, -1) }},{{ vn_date(dag_run.run_after) }}"],
         pool=WRITER,
         execution_timeout=timedelta(minutes=45),
@@ -134,26 +134,26 @@ with DAG(
         pool=API,
         execution_timeout=timedelta(hours=2),
     )
-    r_bronze = SparkJobOperator(
+    r_bronze = TransformOperator(
         task_id="bronze",
-        script="bronze_ingest.py",
+        command="bronze",
         arguments=["--entity", "ping_result_raw", *rng],
         pool=WRITER,
         execution_timeout=timedelta(minutes=45),
         run_type="reconcile",
     )
-    r_silver = SparkJobOperator(
+    r_silver = TransformOperator(
         task_id="silver",
-        script="silver_build.py",
+        command="silver",
         arguments=rng,
         pool=WRITER,
         execution_timeout=timedelta(minutes=60),
         retries=1,
         run_type="reconcile",
     )
-    r_gold = SparkJobOperator(
+    r_gold = TransformOperator(
         task_id="gold",
-        script="gold_build.py",
+        command="gold",
         arguments=rng,
         pool=WRITER,
         execution_timeout=timedelta(minutes=60),
@@ -184,19 +184,19 @@ with DAG(
         pool=API,
         execution_timeout=timedelta(hours=6),
     )
-    b_bronze = SparkJobOperator(
+    b_bronze = TransformOperator(
         task_id="bronze",
-        script="bronze_ingest.py",
+        command="bronze",
         arguments=["--entity", "ping_result_raw", *b_rng],
         pool=WRITER,
         execution_timeout=timedelta(hours=2),
         run_type="backfill",
     )
-    b_silver = SparkJobOperator(
-        task_id="silver", script="silver_build.py", arguments=b_rng, pool=WRITER, execution_timeout=timedelta(hours=3), run_type="backfill"
+    b_silver = TransformOperator(
+        task_id="silver", command="silver", arguments=b_rng, pool=WRITER, execution_timeout=timedelta(hours=3), run_type="backfill"
     )
-    b_gold = SparkJobOperator(
-        task_id="gold", script="gold_build.py", arguments=b_rng, pool=WRITER, execution_timeout=timedelta(hours=3), run_type="backfill"
+    b_gold = TransformOperator(
+        task_id="gold", command="gold", arguments=b_rng, pool=WRITER, execution_timeout=timedelta(hours=3), run_type="backfill"
     )
     b_ingest >> b_bronze >> b_silver >> b_gold
 
@@ -210,9 +210,9 @@ with DAG(
     default_args={**DEFAULTS, "retries": 1},
     tags=["ripe-atlas", "daily", "maintenance"],
 ) as maintenance:
-    compact = SparkJobOperator(
+    compact = TransformOperator(
         task_id="iceberg_compaction",
-        script="iceberg_maintenance.py",
+        command="maintenance",
         pool=WRITER,
         execution_timeout=timedelta(hours=2),
         run_type="scheduled",

@@ -1,39 +1,39 @@
-# transformation/: Spark + Iceberg, staging → Bronze → Silver → Gold
+# transformation/: staging → Bronze → Silver → Gold bằng dbt trên Trino
 
-Mọi job chạy trong container `spark-iceberg`. Image build từ `Dockerfile` ở thư mục này (jar S3A được pin SHA-256).
-Thư mục này được mount vào `/opt/app/transformation`, và `PYTHONPATH` của image có sẵn `lakehouse` (thư mục này) cùng `dq` (`quality/`).
+Không có engine riêng. Trino (catalog ghi `lakehouse`, user `transform`) xử lý dữ liệu. Runner Python `lakehouse`
+chỉ điều phối: chọn manifest, gọi dbt với tham số của lần chạy, đọc kết quả dbt test, rồi quyết định công bố.
+Image `ripe-atlas-transform` (build từ `Dockerfile` ở thư mục này, context là gốc repo) chứa runner và dự án dbt.
+Code nằm sẵn trong image, nên **sau khi sửa thư mục này phải build lại**: `docker compose --profile jobs build transform`.
 
 ```bash
-docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/<job>.py --help
+docker compose --profile jobs run --rm transform --help
+docker compose --profile jobs run --rm transform silver --dates 2026-11-20
 ```
 
-## Job (`jobs/`), theo thứ tự chạy
+## Lệnh (`python -m lakehouse <lệnh>`), theo thứ tự chạy
 
-| Job | Đầu vào → đầu ra | Ghi chú |
+| Lệnh | Đầu vào → đầu ra | Ghi chú |
 |---|---|---|
-| `bronze_ingest.py` | staging (manifest `complete`) → `bronze.*` | MERGE theo `record_uid`; bản ghi hỏng đưa vào `bronze.quarantine` |
-| `silver_build.py` | `bronze.*` → `silver.*` (star schema, SCD2) | Kiểm tra chất lượng **trước** khi ghi; công bố theo partition |
-| `gold_build.py` | Silver **đã công bố** → `gold.*` marts | Chỉ lưu tử số và mẫu số cộng được; có histogram RTT |
-| `gold_crosscheck.py` | Silver ↔ Gold | Kiểm chứng độc lập, không dùng `lakehouse.gold` |
-| `iceberg_maintenance.py` | `rewrite_data_files` | Gộp file nhỏ cho các ngày đã đóng |
+| `bronze` | staging (manifest `complete`) → `bronze.*` | Trino đọc thẳng `.jsonl.gz` qua catalog `staging`; chỉ chèn `record_uid` chưa có; bản ghi hỏng vào `bronze.quarantine` |
+| `silver` | `bronze.*` → `silver.*` (star schema, SCD2) | Bảng nháp → dbt test → mới ghi; lỗi critical thì `blocked` (exit 2) |
+| `gold` | Silver **đã công bố** (`FOR VERSION AS OF`) → `gold.*` | 7 mart, chỉ lưu tử số/mẫu số cộng được; kiểm tra nhất quán giữa các mart |
+| `crosscheck` | Silver ↔ Gold | Kiểm chứng độc lập bằng SQL riêng, không dùng model Gold |
+| `maintenance` | `ALTER TABLE ... EXECUTE optimize` | Gộp file nhỏ cho các ngày đã đóng |
 
-## Thư viện (`lakehouse/`): hàm thuần trên DataFrame, test được mà không cần S3
+## Thư mục
 
-| Module | Vai trò |
+| Đường dẫn | Vai trò |
 |---|---|
-| `common.py` | Hằng số dùng chung (`REPORT_TZ`, `MEASUREMENTS`, `SQL_DIR`), chạy file DDL, log JSON, run id, parse ngày và giờ, đếm theo khóa |
-| `bronze.py` | Schema staging, tách bản ghi hợp lệ / quarantine, kiểm tra toàn vẹn batch |
-| `silver.py` | SCD2 (`build_scd2`), fact result và reply, as-of join, `dim_date` / `dim_time` |
-| `gold.py` | Mart chất lượng theo target / country / ASN / probe, histogram, ghép cặp IPv4/IPv6, coverage |
-| `publication.py` | Giao thức công bố: `PartitionStatus` → `ops.partition_status`, đọc Silver theo snapshot đã pin |
-| `metrics.py` | Đẩy metric job lên Pushgateway |
+| `lakehouse/` | Runner: `bronze.py`, `silver.py`, `gold.py`, `crosscheck.py`, `maintenance.py`; `dbt_runner.py` (gọi dbt), `dq.py` (dbt test → `ops.dq_result`), `publication.py` (`ops.partition_status`), `trino_db.py`, `metrics.py` (Pushgateway), `common.py` |
+| `sql/ops.sql` | DDL bảng runner ghi: bảng ngoài `staging.*`, `work.bronze_pending_object`, `bronze.ingest_manifest`, `ops.*` |
+| `dbt/models/bronze` | Bảng kiểm tra tạm (`work.bronze_checked_*`) + bảng Bronze + quarantine |
+| `dbt/models/silver` | `*_candidate` (nháp, schema `work`) + bảng công bố (`dim_*`, `fact_ping_result`, `fact_ping_reply`) |
+| `dbt/models/gold` | `gold_cohort`, `*_candidate` + 7 mart công bố |
+| `dbt/macros` | Hằng số, SCD2, đọc snapshot công bố, generic test (`tests.sql`) |
+| `dbt/tests` | Test đối soát Silver↔Bronze, nhất quán giữa các mart Gold |
+| `dbt/seeds/probe_set_member.csv` | Thành viên probe set; sinh từ `config/probe_sets/*.json` bằng `dbt/scripts/build_probe_set_seed.py` |
 
-## DDL (`sql/`)
+Biến `LAKEHOUSE_CATALOG` (mặc định `lakehouse`) chọn catalog ghi; `lakehouse_dqtest` trỏ vào nhánh Nessie `dqtest`,
+chỉ dùng cho `tests/integration/dq_block_on_branch.sh`.
 
-`bronze.sql`, `silver.sql`, `ops.sql`: job tự chạy `CREATE … IF NOT EXISTS` lúc khởi động.
-
-## Khác
-
-- `spark-defaults.conf`: catalog Nessie, S3A, bộ nhớ driver (Compose và CI mount vào `/opt/spark/conf/`).
-
-Đặc tả: `docs/silver-model.md`, `docs/metric-dictionary.md`. Test: `tests/transformation/`.
+Test: `tests/transformation/` (runner, offline), dbt test (chạy cùng mỗi lần build), `crosscheck`, test tích hợp trên nhánh Nessie.

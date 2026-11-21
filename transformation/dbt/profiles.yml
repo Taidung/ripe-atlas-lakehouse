@@ -1,0 +1,19 @@
+# Kết nối Trino. Không có mật khẩu: Trino của đồ án không bật xác thực; quyền ghi catalog `lakehouse`
+# chỉ cấp cho user `transform` (serving/trino/rules.json).
+ripe_lakehouse:
+  target: prod
+  outputs:
+    prod:
+      type: trino
+      method: none
+      user: transform
+      host: "{{ env_var('TRINO_HOST', 'trino') }}"
+      port: "{{ env_var('TRINO_PORT', '8080') | int }}"
+      database: "{{ env_var('LAKEHOUSE_CATALOG', 'lakehouse') }}"
+      schema: work
+      threads: 1
+      http_scheme: http
+      session_properties:
+        # Mặc định của cluster (5 phút) dành cho truy vấn dashboard; job biến đổi một ngày cần lâu hơn.
+        query_max_execution_time: 30m
+        query_max_run_time: 30m

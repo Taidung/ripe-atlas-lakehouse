@@ -1,0 +1,48 @@
+# dbt project biến đổi staging -> Bronze -> Silver -> Gold trên Trino (Iceberg + Nessie).
+# Không chạy `dbt build` toàn bộ: runner (transformation/lakehouse) gọi dbt theo từng bước, truyền vars (entity, day,
+# snapshot đã công bố...) rồi đọc kết quả test để quyết định công bố. Xem transformation/README.md.
+name: ripe_lakehouse
+version: "1.0.0"
+config-version: 2
+profile: ripe_lakehouse
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+target-path: "target"
+clean-targets: ["target"]
+
+flags:
+  send_anonymous_usage_stats: false
+  partial_parse: true
+  require_certificate_validation: true   # Trino nội bộ dùng http; tắt cảnh báo SSL legacy của dbt-trino
+
+vars:
+  run_id: "manual"                # id lần chạy của runner (bronze-..., silver-..., gold-...)
+  run_ts: "1970-01-01T00:00:00Z"  # thời điểm bắt đầu lần chạy (UTC, ISO-8601)
+  entity: "ping_result_raw"       # Bronze: ping_result_raw | probe_metadata_raw | measurement_metadata_raw
+  max_quarantine_ratio: 0.05      # Bronze: vượt ngưỡng -> không ghi gì
+  day: "1970-01-01"               # Silver/Gold: ngày (Asia/Ho_Chi_Minh) đang tính
+  measurement_ids: [1001, 1004, 2001, 2004]   # Gold: measurement có bản Silver công bố đọc được
+  fact_snapshot: 0                # Gold: snapshot công bố của silver.fact_ping_result
+  reply_snapshot: 0               # Gold: snapshot công bố của silver.fact_ping_reply
+
+models:
+  ripe_lakehouse:
+    +on_table_exists: replace     # CREATE OR REPLACE TABLE: một commit Iceberg, giữ lịch sử snapshot
+    +views_enabled: false
+    bronze:
+      +schema: bronze
+    silver:
+      +schema: silver
+    gold:
+      +schema: gold
+
+seeds:
+  ripe_lakehouse:
+    +schema: work
+
+data_tests:
+  ripe_lakehouse:
+    +severity: error              # mặc định critical; kiểm tra cảnh báo khai báo severity: warn

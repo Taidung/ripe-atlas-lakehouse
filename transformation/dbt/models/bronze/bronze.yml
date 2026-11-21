@@ -1,0 +1,62 @@
+version: 2
+
+models:
+  - name: bronze_checked_ping_result_raw
+    description: >
+      Bảng tạm của lần chạy Bronze (results): mọi dòng staged của manifest đang chờ, kèm `reason` (NULL = hợp lệ).
+      Test lỗi -> dbt không ghi bronze.ping_result_raw và bronze.quarantine.
+    data_tests:
+      - staged_rows_match_manifest:
+          arguments:
+            entity: ping_result_raw
+      - load_id_matches_manifest
+      - quarantine_ratio_at_most:
+          arguments:
+            max_ratio: "{{ var('max_quarantine_ratio') }}"
+
+  - name: bronze_checked_probe_metadata_raw
+    description: Bảng tạm của lần chạy Bronze (metadata probe).
+    data_tests:
+      - staged_rows_match_manifest:
+          arguments:
+            entity: probe_metadata_raw
+      - load_id_matches_manifest
+      - quarantine_ratio_at_most:
+          arguments:
+            max_ratio: "{{ var('max_quarantine_ratio') }}"
+
+  - name: bronze_checked_measurement_metadata_raw
+    description: Bảng tạm của lần chạy Bronze (metadata measurement).
+    data_tests:
+      - staged_rows_match_manifest:
+          arguments:
+            entity: measurement_metadata_raw
+      - load_id_matches_manifest
+      - quarantine_ratio_at_most:
+          arguments:
+            max_ratio: "{{ var('max_quarantine_ratio') }}"
+
+  - name: ping_result_raw
+    description: >
+      Một dòng = một nội dung result nguồn duy nhất (measurement, probe, timestamp, sha của payload). Cùng business key
+      nhưng payload khác -> nhiều dòng; Silver chọn bản theo quy tắc xác định. Grain, khóa: docs/data-contracts.md §Bronze.
+    columns:
+      - name: record_uid
+        description: sha256(measurement_id|probe_id|event_ts|raw_sha256)
+      - name: event_ts
+        description: timestamp nguồn, Unix giây UTC
+      - name: ictrl_dt
+        description: ngày Asia/Ho_Chi_Minh của cửa sổ logic
+      - name: raw_json
+        description: nguyên văn một dòng response format=txt
+      - name: raw_sha256
+        description: sha256 bytes UTF-8 của raw_json
+      - name: change_type
+        description: new | changed (so với các lần stage trước)
+
+  - name: probe_metadata_raw
+    description: Một dòng = một snapshot metadata của một probe trong một lần thu thập.
+  - name: measurement_metadata_raw
+    description: Một dòng = một snapshot metadata của một measurement trong một lần thu thập.
+  - name: quarantine
+    description: Một dòng = một bản ghi bị cách ly vì một lý do, từ một manifest (reprocess_status pending | reprocessed | ignored).

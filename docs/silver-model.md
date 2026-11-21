@@ -3,7 +3,7 @@
 Phiên bản: v1 (giai đoạn 3, 2026-11-19).
 Code tương ứng:
 - `transformation/lakehouse/silver.py` (biến đổi)
-- `quality/dq/` (kiểm tra chất lượng)
+- `transformation/dbt/models/silver/silver.yml`, `transformation/dbt/tests/silver/` (kiểm tra chất lượng)
 - `transformation/jobs/silver_build.py` (job)
 - `transformation/sql/silver.sql` và `transformation/sql/ops.sql` (DDL)
 
@@ -202,5 +202,5 @@ Thứ tự ưu tiên, deterministic: `fetched_at` mới nhất → `stored_ts` m
   còn `snapshot_id` và `row_count` luôn là của bản công bố gần nhất. Lần chạy bị chặn không xoá hai cột này,
   nên Gold tiếp tục đọc được snapshot cũ (Iceberg time travel) và dashboard không mất dữ liệu.
   `snapshot_id` NULL nghĩa là partition chưa từng được công bố.
-- Danh sách rule: `quality/dq/`. Kết quả lưu vào `ops.dq_result`; Data Docs của GX ở `artifacts/gx/`.
+- Danh sách rule: `transformation/dbt/models/silver/silver.yml` và `transformation/dbt/tests/silver/`. Kết quả lưu vào `ops.dq_result`; xem trên dbt docs (`docs/governance.md`).
 - **Mất gói nặng không phải lỗi dữ liệu.** Result `all_lost` là kết quả đo hợp lệ và được giữ nguyên. Chỉ vi phạm hợp đồng dữ liệu mới bị coi là lỗi, ví dụ `rcvd > sent` hoặc trùng khóa.

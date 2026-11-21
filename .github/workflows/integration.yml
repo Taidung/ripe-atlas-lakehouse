@@ -1,4 +1,4 @@
-# Integration / end-to-end trên stack thật. Nặng (image Spark ~6,5 GB): chạy thủ công hoặc hằng đêm, không chạy ở PR.
+# Integration / end-to-end trên stack thật (core + Trino + monitoring + Superset): chạy thủ công hoặc hằng đêm, không chạy ở PR.
 # Gọi RIPE Atlas API thật cho đúng 1 giờ dữ liệu của tập dev (200 probe) -> không phụ thuộc số lượng result để pass.
 name: integration
 
@@ -39,23 +39,22 @@ jobs:
         run: |
           docker compose --profile analytics --profile monitoring --profile jobs build
           docker compose --profile analytics --profile monitoring up -d --wait
-      - name: Smoke Spark -> Nessie -> Trino
-        run: bash tests/integration/smoke_compat.sh
-      - name: Pipeline 1 giờ (dev-200-v1) -> Bronze -> Silver -> Gold
+      - name: Pipeline 1 giờ (dev-200-v1) -> Bronze -> Silver -> Gold (dbt trên Trino)
         run: |
           END=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:00:00Z); START=$(date -u -d '2 hours ago' +%Y-%m-%dT%H:00:00Z)
+          T="docker compose --profile jobs run --rm -T transform"
           docker compose --profile jobs run --rm -T ingestion metadata
           docker compose --profile jobs run --rm -T ingestion results --start "$START" --end "$END"
-          docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/bronze_ingest.py --entity metadata
-          docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/bronze_ingest.py --entity ping_result_raw --start "$START" --end "$END"
-          docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/silver_build.py --start "$START" --end "$END"
-          docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/gold_build.py --start "$START" --end "$END"
+          $T bronze --entity metadata
+          $T bronze --entity ping_result_raw --start "$START" --end "$END"
+          $T silver --start "$START" --end "$END"
+          $T gold --start "$START" --end "$END"
           DAY=$(TZ=Asia/Ho_Chi_Minh date -d "$START" +%Y-%m-%d)
-          docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/gold_crosscheck.py --date "$DAY"
+          $T crosscheck --date "$DAY"
       - name: Rerun cùng input -> 0 dòng mới (idempotency)
         run: |
           END=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:00:00Z); START=$(date -u -d '2 hours ago' +%Y-%m-%dT%H:00:00Z)
-          docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/bronze_ingest.py --entity ping_result_raw --start "$START" --end "$END" --reprocess 2>&1 | tee bronze_rerun.log
+          docker compose --profile jobs run --rm -T transform bronze --entity ping_result_raw --start "$START" --end "$END" --reprocess 2>&1 | tee bronze_rerun.log
           grep -q '"rows_inserted": 0' bronze_rerun.log
       - name: Chặn công bố khi lỗi critical (nhánh Nessie tạm)
         run: |

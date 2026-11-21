@@ -1,11 +1,13 @@
 """Operator chạy job của đồ án qua Docker SDK (socket /var/run/docker.sock được mount vào Airflow).
 
-- IngestionOperator: tạo container mới từ image ripe-atlas-ingestion (code + probe set nằm sẵn trong image),
-  chỉ truyền đúng biến môi trường ingestion cần; container bị xóa sau khi chạy.
-- SparkJobOperator: `docker exec` spark-submit trong container spark-iceberg đang chạy.
-Cả hai có on_kill: khi task bị timeout/hủy, dừng luôn tiến trình thật (không để job chạy ngầm và ghi chồng).
+Mỗi task tạo một container mới từ image của job (code nằm sẵn trong image), chỉ truyền đúng biến môi trường job cần,
+và xóa container sau khi chạy:
+- IngestionOperator: image ripe-atlas-ingestion (dlt -> staging), khóa atlas-ingest.
+- TransformOperator: image ripe-atlas-transform (python -m lakehouse: Bronze/Silver/Gold bằng dbt trên Trino),
+  khóa atlas-processing để đọc manifest; dữ liệu do Trino xử lý.
+on_kill: khi task bị timeout/hủy, dừng luôn container (không để job chạy ngầm và ghi chồng).
 
-Mã thoát 2 của job Silver/Gold = có ngày bị chặn vì lỗi chất lượng critical -> task thất bại, không retry.
+Mã thoát 2 của transform silver/gold = có ngày bị chặn vì lỗi chất lượng critical -> task thất bại, không retry.
 Lưu ý bảo mật: quyền dùng docker.sock tương đương root trên Docker host; chấp nhận cho môi trường đồ án local.
 """
 
@@ -21,8 +23,8 @@ from airflow.exceptions import AirflowException, AirflowFailException
 from airflow.sdk import BaseOperator
 
 NETWORK = os.environ.get("LAKEHOUSE_NETWORK", "ripe-atlas-lakehouse_lakehouse")
-SPARK_CONTAINER = os.environ.get("SPARK_CONTAINER", "ripe-atlas-lakehouse-spark-iceberg-1")
 INGEST_IMAGE = os.environ.get("INGEST_IMAGE", "ripe-atlas-ingestion:0.2")
+TRANSFORM_IMAGE = os.environ.get("TRANSFORM_IMAGE", "ripe-atlas-transform:0.1")
 INGEST_ENV = [
     "S3_INGEST_ACCESS_KEY",
     "S3_INGEST_SECRET_KEY",
@@ -33,6 +35,8 @@ INGEST_ENV = [
     "ATLAS_CONCURRENCY",
     "PUSHGATEWAY_URL",
 ]
+TRANSFORM_ENV = ["S3_PROCESSING_ACCESS_KEY", "S3_PROCESSING_SECRET_KEY", "PUSHGATEWAY_URL"]
+TRANSFORM_FIXED_ENV = {"TRINO_HOST": "trino", "TRINO_PORT": "8080", "S3_ENDPOINT": "http://s3:8333"}
 
 
 def overlap_hours() -> int:
@@ -54,8 +58,13 @@ def _docker():
     return docker.from_env()
 
 
-class IngestionOperator(BaseOperator):
+class DockerJobOperator(BaseOperator):
+    """Chạy `image` với `command`, stream log vào Airflow, xóa container khi xong."""
+
     template_fields: Sequence[str] = ("arguments",)
+    image: str = ""
+    env_keys: list[str] = []
+    fixed_env: dict[str, str] = {}
 
     def __init__(self, *, arguments: list[str], **kwargs):
         super().__init__(**kwargs)
@@ -65,13 +74,17 @@ class IngestionOperator(BaseOperator):
     def resolve_args(self, context) -> list[str]:
         return self.arguments
 
+    def on_exit_code(self, code: int) -> None:
+        if code != 0:
+            raise AirflowException(f"{self.image} exited with code {code}")
+
     def execute(self, context):
         args = self.resolve_args(context)
-        env = {k: os.environ[k] for k in INGEST_ENV if os.environ.get(k)}
-        self.log.info("ingestion %s (image %s, network %s)", shlex.join(args), INGEST_IMAGE, NETWORK)
+        env = {**self.fixed_env, **{k: os.environ[k] for k in self.env_keys if os.environ.get(k)}}
+        self.log.info("%s %s (network %s)", self.image, shlex.join(args), NETWORK)
         client = _docker()
         self._container = client.containers.run(
-            INGEST_IMAGE, command=args, environment=env, network=NETWORK, detach=True, labels={"ripe.airflow.task": self.task_id}
+            self.image, command=args, environment=env, network=NETWORK, detach=True, labels={"ripe.airflow.task": self.task_id}
         )
         try:
             for line in self._container.logs(stream=True, follow=True):
@@ -80,13 +93,17 @@ class IngestionOperator(BaseOperator):
         finally:
             self._container.remove(force=True)
             self._container = None
-        if code != 0:
-            raise AirflowException(f"ingestion exited with code {code}")
+        self.on_exit_code(code)
 
     def on_kill(self):
         if self._container is not None:
-            self.log.warning("killing ingestion container %s", self._container.id[:12])
+            self.log.warning("killing container %s", self._container.id[:12])
             self._container.stop(timeout=10)
+
+
+class IngestionOperator(DockerJobOperator):
+    image = INGEST_IMAGE
+    env_keys = INGEST_ENV
 
 
 class HourlyIngestionOperator(IngestionOperator):
@@ -97,43 +114,35 @@ class HourlyIngestionOperator(IngestionOperator):
         return ["incremental", "--now", end, "--run-type", "scheduled"]
 
 
-class SparkJobOperator(BaseOperator):
-    template_fields: Sequence[str] = ("arguments",)
+class TransformOperator(DockerJobOperator):
+    """python -m lakehouse <command> ... --run-type <run_type> [--start --end của cửa sổ giờ]."""
 
-    def __init__(self, *, script: str, run_type: str, arguments: list[str] | None = None, hourly_range: bool = False, **kwargs):
+    image = TRANSFORM_IMAGE
+    env_keys = TRANSFORM_ENV
+    fixed_env = TRANSFORM_FIXED_ENV
+
+    def __init__(self, *, command: str, run_type: str, arguments: list[str] | None = None, hourly_range: bool = False, **kwargs):
         """run_type (bắt buộc): nhãn metric của job (scheduled | backfill | reconcile | repair | manual), xem lakehouse/common.py.
 
         Không có mặc định: chỉ lần chạy chính của một stage được gắn `scheduled`. Hai task dùng chung (stage, run_type) thì
         dùng chung group Pushgateway, và lần thành công của task này sẽ che lần thất bại của task kia trong cảnh báo.
         """
-        super().__init__(**kwargs)
-        self.script, self.arguments, self.hourly_range, self.run_type = script, arguments or [], hourly_range, run_type
+        super().__init__(arguments=arguments or [], **kwargs)
+        self.command, self.run_type, self.hourly_range = command, run_type, hourly_range
 
-    def execute(self, context):
-        args = [*self.arguments, "--run-type", self.run_type]
+    def resolve_args(self, context) -> list[str]:
+        args = [self.command, *self.arguments, "--run-type", self.run_type]
         if self.hourly_range:
             start, end = window_bounds(context)
             args += ["--start", start, "--end", end]
-        cmd = ["spark-submit", f"/opt/app/transformation/jobs/{self.script}", *args]
-        self.log.info("docker exec %s %s", SPARK_CONTAINER, shlex.join(cmd))
-        client = _docker()
-        container = client.containers.get(SPARK_CONTAINER)
-        exec_id = client.api.exec_create(container.id, cmd)["Id"]
-        for chunk in client.api.exec_start(exec_id, stream=True):
-            for line in chunk.decode("utf-8", errors="replace").splitlines():
-                if line.strip() and " INFO " not in line:
-                    self.log.info(line)
-        code = client.api.exec_inspect(exec_id)["ExitCode"]
-        if code == 2:
-            raise AirflowFailException(f"{self.script}: partition bị chặn vì lỗi chất lượng critical (exit 2); xem ops.dq_result")
-        if code != 0:
-            raise AirflowException(f"{self.script} exited with code {code}")
+        return args
 
-    def on_kill(self):
-        self.log.warning("killing spark-submit %s in %s", self.script, SPARK_CONTAINER)
-        client = _docker()
-        container = client.containers.get(SPARK_CONTAINER)
-        container.exec_run(["pkill", "-f", f"/opt/app/transformation/jobs/{self.script}"])
+    def on_exit_code(self, code: int) -> None:
+        if code == 2:
+            raise AirflowFailException(
+                f"lakehouse {self.command}: partition bị chặn vì lỗi chất lượng critical (exit 2); xem ops.dq_result"
+            )
+        super().on_exit_code(code)
 
 
 def vn_date(run_after: datetime, offset_days: int = 0) -> str:

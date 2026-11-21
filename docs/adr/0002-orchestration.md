@@ -13,12 +13,12 @@
   - Image đã có sẵn `apache-airflow-providers-docker` 4.6.1 và `docker` SDK 7.2.0, nên **không cần build image riêng**.
 - **Cách chạy job:**
   - Ingestion: container mới từ image `ripe-atlas-ingestion` (code và probe set nằm sẵn trong image).
-  - Spark: `docker exec spark-submit` trong container `spark-iceberg` đang chạy.
+  - Biến đổi: chạy container mới từ image `ripe-atlas-transform` (dbt trên Trino), xem ADR-0003.
   - Cả hai đều có `on_kill`, nên task bị timeout hoặc hủy thì tiến trình thật cũng dừng.
 - **Pool:** `lakehouse_writer` (1 slot) cho mọi task ghi Iceberg; `atlas_api` (1 slot) cho task gọi API.
 
 ## Hệ quả
 
 - **RAM:** container Airflow ~150 MB lúc rảnh, giới hạn 2 GB; Postgres ~50 MB. Số đo khi chạy DAG ở `docs/test-report.md`.
-- **Bảo mật:** Airflow mount `docker.sock`, tương đương quyền root trên Docker host. Chỉ chấp nhận cho môi trường đồ án local. Khi triển khai thật, thay bằng Spark cluster/Spark Connect và KubernetesPodOperator (hoặc tương đương), bỏ mount socket.
+- **Bảo mật:** Airflow mount `docker.sock`, tương đương quyền root trên Docker host. Chỉ chấp nhận cho môi trường đồ án local. Khi triển khai thật, thay bằng KubernetesPodOperator (hoặc tương đương), bỏ mount socket.
 - **Phương án nhẹ hơn đã cân nhắc:** CLI + cron. Ít RAM hơn, nhưng mất UI, lịch sử, retry và pool có sẵn.

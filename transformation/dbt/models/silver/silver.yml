@@ -1,0 +1,196 @@
+version: 2
+
+# Kiểm tra chất lượng Silver (thay bộ expectation GX của bản Spark). severity error = critical: chặn công bố;
+# severity warn = cảnh báo: vẫn công bố, partition ghi published_with_warnings.
+# Ngưỡng tỷ lệ của các kiểm tra warn là cấu hình đề xuất, chưa hiệu chỉnh trên lịch sử dài.
+
+models:
+  - name: dim_probe_candidate
+    description: dim_probe (SCD2) vừa tính, chưa công bố.
+    data_tests:
+      - scd2_valid:
+          arguments:
+            key: probe_id
+      - unique_combination:
+          arguments:
+            columns: [probe_id, version_no]
+      - expression_is_true:
+          arguments:
+            expression: valid_to > valid_from
+    columns:
+      - name: probe_sk
+        data_tests: [unique, not_null]
+
+  - name: dim_measurement_candidate
+    description: dim_measurement (SCD2) vừa tính, chưa công bố.
+    data_tests:
+      - scd2_valid:
+          arguments:
+            key: measurement_id
+      - unique_combination:
+          arguments:
+            columns: [measurement_id, version_no]
+      - expression_is_true:
+          arguments:
+            expression: valid_to > valid_from
+    columns:
+      - name: measurement_sk
+        data_tests: [unique, not_null]
+
+  - name: fact_ping_result_candidate
+    description: Fact result của một ngày, chưa công bố.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [measurement_id, probe_id, event_ts]
+      - expression_is_true:
+          name: measurement_af_pairs
+          arguments:
+            expression: (measurement_id, af) IN ((1001, 4), (1004, 4), (2001, 6), (2004, 6))
+      - expression_is_true:
+          name: packets_sent_in_range
+          arguments:
+            expression: packets_sent BETWEEN 0 AND 64
+      - expression_is_true:
+          name: packets_sent_ge_received
+          arguments:
+            expression: packets_sent >= packets_received
+      - expression_is_true:
+          name: rtt_min_avg_non_negative
+          arguments:
+            expression: rtt_min_ms >= 0 AND rtt_avg_ms >= 0
+      - expression_is_true:
+          name: rtt_max_ge_min
+          arguments:
+            expression: rtt_max_ms >= rtt_min_ms
+      - expression_is_true:
+          name: valid_rtt_count_in_range
+          arguments:
+            expression: valid_rtt_count BETWEEN 0 AND 64
+      # ---- cảnh báo (vẫn công bố)
+      - ratio_at_least:
+          name: counts_consistent_ratio
+          config: {severity: warn}
+          arguments:
+            condition: counts_consistent
+            min_ratio: 0.999
+      - ratio_at_least:
+          name: probe_metadata_known_ratio
+          config: {severity: warn}
+          arguments:
+            condition: probe_sk <> -1
+            min_ratio: 0.99
+      - ratio_at_least:
+          name: public_probe_ratio
+          config: {severity: warn}
+          arguments:
+            condition: public_status = 'public'
+            min_ratio: 0.99
+      # Độ trễ âm = đồng hồ probe lệch (clock_suspect); > 3 giờ = vượt overlap.
+      - ratio_at_least:
+          name: ingest_delay_within_overlap_ratio
+          config: {severity: warn}
+          arguments:
+            condition: ingest_delay_s BETWEEN 0 AND 10800
+            where_clause: ingest_delay_s IS NOT NULL
+            min_ratio: 0.99
+      - ratio_at_least:
+          name: clock_not_suspect_ratio
+          config: {severity: warn}
+          arguments:
+            condition: NOT clock_suspect
+            min_ratio: 0.95
+    columns:
+      - name: result_id
+        data_tests: [unique, not_null]
+      - name: measurement_id
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1001, 1004, 2001, 2004]
+                quote: false
+      - name: af
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [4, 6]
+                quote: false
+      - name: probe_id
+        data_tests: [not_null]
+      - name: event_ts
+        data_tests: [not_null]
+      - name: event_time
+        data_tests: [not_null]
+      - name: ictrl_dt
+        data_tests: [not_null]
+      - name: date_key
+        data_tests: [not_null]
+      - name: time_key
+        data_tests: [not_null]
+      - name: probe_sk
+        data_tests: [not_null]
+      - name: measurement_sk
+        data_tests: [not_null]
+      - name: record_uid
+        data_tests: [not_null]
+      - name: result_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [all_received, partial_loss, all_lost, send_error]
+
+  - name: fact_ping_reply_candidate
+    description: Reply của một ngày, chưa công bố.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [result_id, reply_seq]
+      # Phần tử dạng lạ (unknown) không phá hợp đồng nhưng có thể là dấu hiệu nguồn đổi format.
+      - expression_is_true:
+          name: reply_type_known
+          config: {severity: warn}
+          arguments:
+            expression: reply_type IN ('reply', 'duplicate', 'timeout', 'error')
+      # Chưa thấy RTT âm hay > 60 s trong dữ liệu thật; nếu có thì cảnh báo (is_valid_rtt đã loại RTT âm).
+      - expression_is_true:
+          name: reply_rtt_in_range
+          config: {severity: warn}
+          arguments:
+            expression: rtt_ms BETWEEN 0 AND 60000
+    columns:
+      - name: reply_id
+        data_tests: [unique, not_null]
+      - name: reply_seq
+        data_tests: [not_null]
+      - name: reply_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [reply, duplicate, timeout, error, unknown]
+
+  - name: dim_probe
+    description: >
+      Probe theo SCD2: mỗi thay đổi thuộc tính (quốc gia, ASN, prefix, public, anchor, toạ độ) sinh phiên bản mới với
+      [valid_from, valid_to). probe_sk = -1 là unknown member. Đặc tả: docs/silver-model.md.
+  - name: dim_measurement
+    description: Measurement theo SCD2 (af, target, interval, packets...). measurement_sk = -1 là unknown member.
+  - name: dim_date
+    description: Lịch 2010-2035, date_key = yyyyMMdd.
+  - name: dim_time
+    description: Một dòng mỗi phút trong ngày, time_key = HHMM (giờ VN).
+  - name: fact_ping_result
+    description: >
+      Một dòng = một lần ping (measurement, probe, event_ts), đã chọn phiên bản nguồn, gắn dimension theo thời điểm đo.
+      Partition (ictrl_dt, measurement_id). Chỉ đọc snapshot đã công bố (ops.partition_status).
+    columns:
+      - name: result_id
+        description: sha256('ping_result'|measurement_id|probe_id|event_ts)
+      - name: packets_lost
+        description: packets_sent - packets_received khi hợp lệ
+      - name: valid_rtt_count
+        description: số RTT hợp lệ (rtt không NULL, dup = 0, rtt >= 0)
+  - name: fact_ping_reply
+    description: Một dòng = một gói của một lần ping (reply_seq từ 0). reply_type reply | duplicate | timeout | error | unknown.

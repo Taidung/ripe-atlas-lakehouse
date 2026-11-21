@@ -24,9 +24,10 @@ Ngày truy cập của tất cả link dưới đây: **2026-11-18**.
 
 - dlt filesystem destination (doc 1.32.0): https://dlthub.com/docs/dlt-ecosystem/destinations/filesystem
   - jsonl là định dạng mặc định, gzip mặc định; `endpoint_url` cho S3-compatible; dlt không tự tạo bucket.
-- GX Core với DataFrame (doc 1.25.0): https://docs.greatexpectations.io/docs/core/connect_to_data/dataframes/
-- OpenMetadata Spark lineage: https://docs.open-metadata.org/latest/connectors/ingestion/lineage/spark-lineage
-  - Dùng `io.openlineage:openlineage-spark_2.12` ≥ 1.37.0; endpoint `/api/v1/openlineage/lineage`.
+- dbt với Trino (dbt-trino): https://docs.getdbt.com/docs/core/connect-data-platform/trino-setup
+- Trino Iceberg connector (catalog Nessie, `FOR VERSION AS OF`, `ALTER TABLE ... EXECUTE optimize`): https://trino.io/docs/current/connector/iceberg.html
+- Trino Hive connector (bảng ngoài JSON, metastore dạng file, `register_partition`): https://trino.io/docs/current/connector/hive.html
+- Trino phân quyền bằng file: https://trino.io/docs/current/security/file-system-access-control.html
 - Prometheus, khi nào dùng Pushgateway: https://prometheus.io/docs/practices/pushing/
   - Chỉ cho service-level batch job; Pushgateway không tự xóa series.
 
@@ -38,10 +39,9 @@ Phiên bản stable mới nhất được tra để lập compatibility matrix; 
 |---|---|---|
 | Trino | 484 | https://github.com/trinodb/trino/releases/tag/484 |
 | Superset | 6.1.0 | https://github.com/apache/superset/releases/tag/6.1.0 |
-| OpenMetadata | 2.0.8-release | https://github.com/open-metadata/OpenMetadata/releases/tag/2.0.8-release |
+| dbt-core / dbt-trino | 1.12.7 / 1.12.0 | https://pypi.org/project/dbt-core/ , https://pypi.org/project/dbt-trino/ (tra 2026-11-21, đã pin trong uv.lock) |
 | Iceberg | 1.12.0 | https://iceberg.apache.org/releases/ |
 | Airflow | 3.4.0 | https://github.com/apache/airflow/releases/tag/3.4.0 |
 | Prometheus | 3.16.0 | https://github.com/prometheus/prometheus/releases/tag/v3.16.0 |
 | Grafana | 13.3.1 | https://github.com/grafana/grafana/releases/tag/v13.3.1 |
 | Pushgateway | 1.11.4 | https://github.com/prometheus/pushgateway/releases/tag/v1.11.4 |
-| GX Core | 1.25.0? | Chỉ theo version selector trên trang doc; **chưa xác minh** trên PyPI (bị chặn bởi challenge page) |

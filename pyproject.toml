@@ -16,14 +16,21 @@ dev = [
     "pytest==8.3.5",
     "ruff==0.17.5",
 ]
+# Image ripe-atlas-transform (transformation/Dockerfile): runner + dbt trên Trino. Cài bằng `uv sync --only-group transform`.
+transform = [
+    "dbt-core==1.12.7",
+    "dbt-trino==1.12.0",
+    "trino==0.340.0",
+    "prometheus-client==0.26.0",
+    "s3fs==2026.9.0",
+]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/ingestion"]
-pythonpath = ["."]
+testpaths = ["tests/ingestion", "tests/transformation"]
+pythonpath = [".", "transformation"]
 markers = [
     "live: gọi RIPE Atlas API thật (chạy riêng, không chạy trong PR checks)",
     "integration: cần stack Docker đang chạy",
-    "spark: chạy trong container Spark",
 ]
 addopts = "-m 'not live and not integration'"
 
@@ -37,4 +44,4 @@ select = ["E", "F", "W", "I", "B", "UP"]
 ignore = ["B008", "UP017"]  # E501 bật: dòng tối đa 140 ký tự (line-length)
 
 [tool.ruff.lint.isort]
-known-first-party = ["ingestion", "lakehouse", "dq", "ripe_atlas", "provision", "tests"]
+known-first-party = ["ingestion", "lakehouse", "ripe_atlas", "provision", "tests"]

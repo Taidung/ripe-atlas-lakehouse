@@ -1,325 +1,213 @@
-"""Silver -> Gold marts (hàm thuần, không đọc/ghi bảng). Định nghĩa metric: docs/metric-dictionary.md.
+"""Silver -> Gold marts bằng dbt. Chỉ đọc Silver ĐÃ CÔNG BỐ, kiểm tra nhất quán trước khi ghi.
 
-Kiểm tra nhất quán giữa các mart: quality/dq/checks.py::gold_consistency_checks.
+  python -m lakehouse gold --dates 2026-11-19
+  python -m lakehouse gold --start 2026-11-19T00:00:00Z --end 2026-11-19T03:00:00Z
 
-Mọi mart chỉ lưu tử số/mẫu số và thống kê cộng được; tỷ lệ được tính lại sau khi group.
+Luồng cho mỗi ngày (giờ VN):
+  1. Lấy snapshot công bố gần nhất của fact/reply Silver (ops.partition_status). Không measurement nào có bản công bố
+     -> không ghi đè mart, đánh dấu blocked_upstream.
+  2. dbt build tag:gold_build: cohort (chỉ probe set thực sự được ingest giờ đó, Silver đọc `FOR VERSION AS OF`),
+     7 mart nháp, kiểm tra nhất quán giữa các mart + khóa/quan hệ.
+  3. Lỗi critical -> không ghi, blocked. Không lỗi -> dbt run tag:gold_publish (xóa ngày rồi chèn, kể cả kết quả rỗng),
+     cập nhật ops.partition_status.
+  4. Đẩy metric độ tươi/độ phủ lên Pushgateway.
+Mã thoát 2 nếu có ngày bị chặn. Định nghĩa metric: docs/metric-dictionary.md.
 """
 
 from __future__ import annotations
 
-import json
-import math
-from pathlib import Path
-from typing import Any
+import csv
+from collections import Counter
+from datetime import date
 
-from pyspark.sql import Column, DataFrame, SparkSession, Window
-from pyspark.sql import functions as F
+from lakehouse.common import DBT_DIR, SQL_DIR, add_day_args, iso_z, log_event, new_run_id, selected_days, utc_now, validate_day_args
+from lakehouse.dbt_runner import dbt
+from lakehouse.dq import CRITICAL, DqRecorder, failed_names, from_dbt, has_critical_failure, has_warning
+from lakehouse.publication import (
+    PUBLISHED,
+    PartitionStatus,
+    partition_statuses,
+    published_snapshot,
+    readable_measurements,
+    set_partition_status,
+)
+from lakehouse.trino_db import Trino
 
-from lakehouse.common import MEASUREMENTS, REPORT_TZ
-
-BUCKET_BASE_MS = 0.1
-BUCKET_RATIO = 1.02
-PAIR_MAX_DT_S = 120
-TARGET_PAIRS = {"k.root-servers.net": (1001, 2001), "f.root-servers.net": (1004, 2004)}
-UNKNOWN_COUNTRY = "ZZ"
-UNKNOWN_ASN = -1
-
-HOUR_KEYS = ["ictrl_dt", "event_hour_utc", "event_hour_local", "probe_set_version"]
-MSM_KEYS = ["measurement_id", "af", "target"]
-
-
-# ---------------------------------------------------------------------------- helpers
-def local_hour(col: str | Column) -> Column:
-    """Giờ treo tường Asia/Ho_Chi_Minh, kiểu timestamp_ntz (không múi giờ) cho Superset/Trino."""
-    return F.from_utc_timestamp(col, REPORT_TZ).cast("timestamp_ntz")
-
-
-def bucket_id(rtt: str | Column) -> Column:
-    return F.floor(
-        F.log(F.greatest(F.col(rtt) if isinstance(rtt, str) else rtt, F.lit(BUCKET_BASE_MS)) / BUCKET_BASE_MS) / math.log(BUCKET_RATIO)
-    ).cast("int")
+SILVER_FACT = "nessie.silver.fact_ping_result"
+SILVER_REPLY = "nessie.silver.fact_ping_reply"
+MARTS = [
+    "quality_hourly_target",
+    "quality_hourly_country",
+    "quality_hourly_asn",
+    "quality_hourly_probe",
+    "rtt_histogram_hourly",
+    "ipv4_ipv6_paired_hourly",
+    "coverage_hourly",
+]
 
 
-def bucket_rep_ms(b: Column) -> Column:
-    return F.lit(BUCKET_BASE_MS) * F.pow(F.lit(BUCKET_RATIO), b + 0.5)
-
-
-def load_probe_sets(directory: Path) -> list[dict[str, Any]]:
-    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(directory.glob("*.json"))]
-
-
-def membership(spark: SparkSession, probe_sets: list[dict[str, Any]]) -> DataFrame:
-    rows = [(ps["version"], af, pid) for ps in probe_sets for af, key in ((4, "probes_v4"), (6, "probes_v6")) for pid in ps[key]]
-    return spark.createDataFrame(rows, "probe_set_version string, af int, probe_id long")
-
-
-# ---------------------------------------------------------------------------- inputs
-COHORT_HOUR_KEYS = ["probe_set_version", "measurement_id", "event_hour_utc"]
-
-
-def cohort_results(facts: DataFrame, members: DataFrame, ingested_hours: DataFrame | None = None) -> DataFrame:
-    """Mọi result thuộc cohort (trước khi lọc public/clock); thêm cột giờ và mã unknown cho country/asn.
-
-    `ingested_hours` (probe_set_version, measurement_id, event_hour_utc): các giờ mà probe set đó THỰC SỰ được ingest
-    (có manifest đã nạp vào Bronze). Một probe thuộc nhiều probe set chỉ được tính cho cohort đã được ingest giờ đó;
-    nếu không, cohort chưa từng ingest vẫn "có dữ liệu" nhờ các probe trùng và bị báo độ đầy đủ rất thấp.
-    None = không lọc (dùng trong test).
-    """
-    f = facts.drop("probe_set_version").join(F.broadcast(members), ["af", "probe_id"])
-    if ingested_hours is not None:
-        f = f.join(F.broadcast(ingested_hours.select(*COHORT_HOUR_KEYS).distinct()), COHORT_HOUR_KEYS, "left_semi")
-    return (
-        f.withColumn("event_hour_local", local_hour("event_hour_utc"))
-        .withColumn("country_code", F.coalesce("country_code", F.lit(UNKNOWN_COUNTRY)))
-        .withColumn("asn", F.coalesce("asn", F.lit(UNKNOWN_ASN)))
-        .withColumn("is_eligible", (F.col("public_status") == "public") & ~F.col("clock_suspect"))
+def ensure_probe_set_seed(db: Trino) -> None:
+    """Nạp seed probe_set_member khi bảng chưa có hoặc khác file CSV (probe set mới). Probe set là bất biến nên
+    so số dòng theo version là đủ; tránh nạp lại 7 nghìn dòng ở mỗi lần chạy theo giờ."""
+    with (DBT_DIR / "seeds" / "probe_set_member.csv").open(encoding="utf-8") as f:
+        expected = Counter(row["probe_set_version"] for row in csv.DictReader(f))
+    current = (
+        dict(db.query("SELECT probe_set_version, count(*) FROM work.probe_set_member GROUP BY 1"))
+        if db.table_exists("work.probe_set_member")
+        else {}
     )
+    if current != dict(expected):
+        run = dbt("seed", "probe_set_member", {})
+        if not run.success:
+            raise RuntimeError("dbt seed probe_set_member thất bại")
 
 
-def measure_aggs() -> list[Column]:
-    sent, rcvd = F.col("packets_sent"), F.col("packets_received")
-    measured = sent > 0
-    return [
-        F.count("*").alias("results_total"),
-        F.sum(measured.cast("long")).alias("results_measured"),
-        F.sum((F.col("result_status") == "send_error").cast("long")).alias("results_send_error"),
-        F.sum((measured & (rcvd > 0)).cast("long")).alias("results_with_response"),
-        F.sum((F.col("result_status") == "all_lost").cast("long")).alias("results_all_lost"),
-        F.sum((F.col("result_status") == "partial_loss").cast("long")).alias("results_partial_loss"),
-        F.coalesce(F.sum(F.when(measured, sent)), F.lit(0)).cast("long").alias("packets_sent"),
-        F.coalesce(F.sum(F.when(measured, rcvd)), F.lit(0)).cast("long").alias("packets_received"),
-        F.coalesce(F.sum(F.when(measured, sent - rcvd)), F.lit(0)).cast("long").alias("packets_lost"),
-        F.coalesce(F.sum("valid_rtt_count"), F.lit(0)).cast("long").alias("rtt_count"),
-        F.sum("rtt_sum_ms").alias("rtt_sum_ms"),
-        F.sum("rtt_sumsq_ms2").alias("rtt_sumsq_ms2"),
-        F.min("rtt_min_ms").alias("rtt_min_ms"),
-        F.max("rtt_max_ms").alias("rtt_max_ms"),
+def mark_marts_blocked(db: Trino, day: date, measurement_ids: list[int], status: str, reason: str, run_id: str, dq_run_id: str):
+    """Đánh dấu mọi mart của ngày `day` là bị chặn; snapshot Gold đã công bố trước đó được giữ nguyên."""
+    now = utc_now()
+    rows = [
+        PartitionStatus("gold", f"nessie.gold.{k}", day, m, status, None, run_id, dq_run_id, None, reason, now)
+        for k in MARTS
+        for m in measurement_ids
     ]
+    set_partition_status(db, rows)
 
 
-def with_meta(df: DataFrame, run_id: str, built_at) -> DataFrame:
-    return df.withColumn("gold_run_id", F.lit(run_id)).withColumn("gold_built_at", F.lit(built_at).cast("timestamp"))
+def build_day(db: Trino, day: date, run_id: str, dq: DqRecorder) -> str:
+    silver_status = partition_statuses(db, SILVER_FACT, day)
+    readable = readable_measurements(db, SILVER_FACT, day)
+    log_event("gold", "day_start", ictrl_dt=str(day), silver_status=silver_status, readable=readable)
+    if not readable:
+        # Không measurement nào có bản Silver công bố: KHÔNG ghi đè mart (bản Gold cũ, nếu có, giữ nguyên).
+        reason = "no published silver snapshot"
+        mark_marts_blocked(db, day, sorted(silver_status) or [-1], "blocked_upstream", reason, run_id, dq.dq_run_id)
+        log_event("gold", "day_skipped", ictrl_dt=str(day), reason=reason)
+        return "blocked_upstream"
+
+    pinned = {t: published_snapshot(db, t, day) for t in (SILVER_FACT, SILVER_REPLY)}
+    log_event("gold", "silver_pinned", ictrl_dt=str(day), snapshots=pinned)
+    missing = [t for t, s in pinned.items() if s is None]
+    if missing:
+        raise RuntimeError(f"{day}: chưa có snapshot Silver công bố cho {missing}")
+    variables = {
+        "day": str(day),
+        "run_id": run_id,
+        "run_ts": iso_z(utc_now()),
+        "measurement_ids": readable,
+        "fact_snapshot": pinned[SILVER_FACT],
+        "reply_snapshot": pinned[SILVER_REPLY],
+    }
+
+    run = dbt("build", "tag:gold_build", variables)
+    if run.errors():
+        raise RuntimeError(f"{day}: dbt lỗi khi tính Gold: {[n.name for n in run.errors()]}")
+    checks = from_dbt(run.tests())
+    scope = f"ictrl_dt={day}"
+    measurement_ids = sorted(set(silver_status) | set(readable))
+
+    if has_critical_failure(checks):
+        dq.write("gold", "nessie.gold.*", scope, checks, None)
+        failed = failed_names(checks, CRITICAL)
+        mark_marts_blocked(db, day, measurement_ids, "blocked", "critical: " + "; ".join(failed)[:900], run_id, dq.dq_run_id)
+        log_event("gold", "day_blocked", ictrl_dt=str(day), failed=failed)
+        return "blocked"
+
+    publish = dbt("run", "tag:gold_publish", variables)
+    if not publish.success:
+        raise RuntimeError(f"{day}: dbt lỗi khi ghi Gold: {[n.name for n in publish.errors()]}")
+    snapshots = {k: db.latest_snapshot(f"gold.{k}") for k in MARTS}
+    counts = {k: db.scalar(f"SELECT count(*) FROM work.{k}_candidate") for k in MARTS}
+    dq.write("gold", "nessie.gold.*", scope, checks, snapshots["quality_hourly_target"])
+
+    status = "published_with_warnings" if has_warning(checks) else "published"
+    now = utc_now()
+    rows = []
+    for k in MARTS:
+        for m in measurement_ids:
+            if m not in readable:
+                reason = f"silver status {silver_status.get(m)}"
+                rows.append(
+                    PartitionStatus("gold", f"nessie.gold.{k}", day, m, "blocked_upstream", None, run_id, dq.dq_run_id, None, reason, now)
+                )
+                continue
+            # Silver lần gần nhất bị chặn nhưng còn bản công bố cũ: Gold dựng từ bản đó và ghi chú lại.
+            stale = silver_status.get(m) not in PUBLISHED
+            note = f"silver latest run {silver_status.get(m)}; built from last published snapshot" if stale else None
+            rows.append(
+                PartitionStatus("gold", f"nessie.gold.{k}", day, m, status, counts[k], run_id, dq.dq_run_id, snapshots[k], note, now)
+            )
+    set_partition_status(db, rows)
+    log_event("gold", "day_written", ictrl_dt=str(day), status=status, rows=counts)
+    return status
 
 
-# ---------------------------------------------------------------------------- quality marts
-def quality_target(eligible: DataFrame) -> DataFrame:
-    return eligible.groupBy(*HOUR_KEYS, *MSM_KEYS).agg(
-        *measure_aggs(),
-        F.countDistinct("probe_id").alias("probes_observed"),
-        F.countDistinct(F.when(F.col("country_code") != UNKNOWN_COUNTRY, F.col("country_code"))).alias("countries_observed"),
-        F.countDistinct(F.when(F.col("asn") != UNKNOWN_ASN, F.col("asn"))).alias("asns_observed"),
-    )
-
-
-def quality_country(eligible: DataFrame) -> DataFrame:
-    return eligible.groupBy(*HOUR_KEYS, *MSM_KEYS, "country_code").agg(
-        *measure_aggs(),
-        F.countDistinct("probe_id").alias("probes_observed"),
-        F.countDistinct(F.when(F.col("asn") != UNKNOWN_ASN, F.col("asn"))).alias("asns_observed"),
-    )
-
-
-def quality_asn(eligible: DataFrame) -> DataFrame:
-    return eligible.groupBy(*HOUR_KEYS, *MSM_KEYS, "asn").agg(
-        *measure_aggs(),
-        F.countDistinct("probe_id").alias("probes_observed"),
-        F.countDistinct("country_code").alias("asn_country_count"),
-        F.min("country_code").alias("asn_primary_country"),
-    )
-
-
-def quality_probe(eligible: DataFrame) -> DataFrame:
-    return eligible.groupBy(*HOUR_KEYS, *MSM_KEYS, "probe_id").agg(
-        *measure_aggs(), F.max("probe_sk").alias("probe_sk"), F.first("country_code").alias("country_code"), F.first("asn").alias("asn")
-    )
-
-
-def rtt_histogram(replies: DataFrame, eligible: DataFrame) -> DataFrame:
-    keys = eligible.select("result_id", *HOUR_KEYS, *MSM_KEYS, "country_code", "asn")
-    valid = replies.filter("is_valid_rtt").select("result_id", "rtt_ms").withColumn("bucket_id", bucket_id("rtt_ms"))
-    h = (
-        valid.join(keys, "result_id")
-        .groupBy(*HOUR_KEYS, *MSM_KEYS, "country_code", "asn", "bucket_id")
-        .agg(F.count("*").alias("reply_count"))
-    )
-    b = F.col("bucket_id")
-    return (
-        h.withColumn("bucket_rep_ms", bucket_rep_ms(b))
-        .withColumn("bucket_lower_ms", F.when(b == 0, F.lit(0.0)).otherwise(F.lit(BUCKET_BASE_MS) * F.pow(F.lit(BUCKET_RATIO), b)))
-        .withColumn("bucket_upper_ms", F.lit(BUCKET_BASE_MS) * F.pow(F.lit(BUCKET_RATIO), b + 1))
-    )
-
-
-# ---------------------------------------------------------------------------- IPv4 / IPv6 pairs
-def paired(eligible: DataFrame) -> DataFrame:
-    cols = [
-        "probe_set_version",
-        "target",
-        "probe_id",
-        "event_ts",
-        "event_hour_utc",
-        "event_hour_local",
-        "ictrl_dt",
-        "packets_sent",
-        "packets_lost",
-        "rtt_sum_ms",
-        "valid_rtt_count",
-        "country_code",
-        "asn",
-        "result_id",
-    ]
-    v4 = eligible.filter("af = 4").select(
-        *[F.col(c).alias(f"v4_{c}") if c not in ("probe_set_version", "target", "probe_id") else c for c in cols]
-    )
-    v6 = eligible.filter("af = 6").select(
-        *[F.col(c).alias(f"v6_{c}") if c not in ("probe_set_version", "target", "probe_id") else c for c in cols]
-    )
-    cand = (
-        v4.join(v6, ["probe_set_version", "target", "probe_id"])
-        .withColumn("dt", F.abs(F.col("v6_event_ts") - F.col("v4_event_ts")))
-        .filter(F.col("dt") <= PAIR_MAX_DT_S)
-    )
-    r4 = Window.partitionBy("v4_result_id").orderBy("dt", "v6_event_ts")
-    r6 = Window.partitionBy("v6_result_id").orderBy("dt", "v4_event_ts")
-    pairs = cand.withColumn("r4", F.row_number().over(r4)).withColumn("r6", F.row_number().over(r6)).filter("r4 = 1 AND r6 = 1")
-
-    keys = ["probe_set_version", "target", "probe_id", "ictrl_dt", "event_hour_utc", "event_hour_local"]
-    # Cặp được xếp vào giờ của result v4.
-    agg_pairs = (
-        (
-            pairs.withColumn("ictrl_dt", F.col("v4_ictrl_dt"))
-            .withColumn("event_hour_utc", F.col("v4_event_hour_utc"))
-            .withColumn("event_hour_local", F.col("v4_event_hour_local"))
+# ---------------------------------------------------------------------------- metric vận hành
+def push_freshness(db: Trino, m) -> None:
+    """Độ tươi và độ phủ theo cohort × measurement, đọc từ Gold đã công bố (mọi ngày)."""
+    if not db.table_exists("gold.coverage_hourly"):
+        return
+    for r in db.dicts("""
+        SELECT probe_set_version, measurement_id, to_unixtime(max(max_event_time)) AS mx
+        FROM gold.coverage_hourly WHERE data_state = 'measured' GROUP BY 1, 2
+    """):
+        m.set(
+            "ripe_gold_max_event_timestamp_seconds",
+            "event_time lớn nhất đã có trong Gold (Unix giây)",
+            r["mx"],
+            probe_set_version=r["probe_set_version"],
+            measurement_id=str(r["measurement_id"]),
         )
-        .groupBy(*keys)
-        .agg(
-            F.count("*").alias("pairs"),
-            F.avg("dt").alias("pair_dt_mean_s"),
-            F.first("v4_country_code").alias("country_code"),
-            F.first("v4_asn").alias("asn_v4"),
-            F.first("v6_asn").alias("asn_v6"),
-            *[
-                F.coalesce(F.sum(f"{s}_{m}"), F.lit(0)).cast("long" if m != "rtt_sum_ms" else "double").alias(f"{s}_{m}")
-                for s in ("v4", "v6")
-                for m in ("packets_sent", "packets_lost", "valid_rtt_count")
-            ],
-            F.sum("v4_rtt_sum_ms").alias("v4_rtt_sum_ms"),
-            F.sum("v6_rtt_sum_ms").alias("v6_rtt_sum_ms"),
+    for r in db.dicts("""
+        WITH latest AS (
+            SELECT probe_set_version, measurement_id, max(event_hour_utc) AS h
+            FROM gold.coverage_hourly WHERE data_state <> 'not_processed' GROUP BY 1, 2
         )
-    )
-
-    paired_ids = pairs.select(F.col("v4_result_id").alias("result_id")).unionByName(pairs.select(F.col("v6_result_id").alias("result_id")))
-    unpaired = (
-        eligible.join(paired_ids, "result_id", "left_anti")
-        .groupBy(*keys)
-        .agg(
-            F.sum((F.col("af") == 4).cast("long")).alias("unpaired_v4_results"),
-            F.sum((F.col("af") == 6).cast("long")).alias("unpaired_v6_results"),
-            F.first("country_code").alias("_cc"),
+        SELECT c.probe_set_version, c.measurement_id, c.results_total_raw, c.expected_results, c.data_state,
+               to_unixtime(c.event_hour_utc) AS h
+        FROM gold.coverage_hourly c
+        JOIN latest l ON c.probe_set_version = l.probe_set_version AND c.measurement_id = l.measurement_id AND c.event_hour_utc = l.h
+    """):
+        labels = {"probe_set_version": r["probe_set_version"], "measurement_id": str(r["measurement_id"])}
+        m.set("ripe_gold_latest_hour_results", "Số result của giờ gần nhất đã xử lý", r["results_total_raw"], **labels)
+        if r["expected_results"]:  # expected = 0 (vd probe set không có probe IPv6): độ đầy đủ không xác định, không đẩy
+            m.set(
+                "ripe_gold_latest_hour_completeness_ratio",
+                "Độ đầy đủ ước tính của giờ gần nhất đã xử lý",
+                r["results_total_raw"] / r["expected_results"],
+                **labels,
+            )
+        m.set("ripe_gold_latest_hour_timestamp_seconds", "Giờ gần nhất đã xử lý (Unix giây)", r["h"], **labels)
+        m.set(
+            "ripe_gold_latest_hour_measured", "1 nếu giờ gần nhất đã xử lý có dữ liệu", 1 if r["data_state"] == "measured" else 0, **labels
         )
-    )
-    out = agg_pairs.join(unpaired, keys, "full_outer")
-    out = (
-        out.withColumn("country_code", F.coalesce("country_code", "_cc"))
-        .drop("_cc")
-        .fillna(
-            0,
-            subset=[
-                "pairs",
-                "unpaired_v4_results",
-                "unpaired_v6_results",
-                "v4_packets_sent",
-                "v4_packets_lost",
-                "v4_valid_rtt_count",
-                "v6_packets_sent",
-                "v6_packets_lost",
-                "v6_valid_rtt_count",
-            ],
-        )
-    )
-    msm = F.create_map(*[x for t, (a, b) in TARGET_PAIRS.items() for x in (F.lit(t), F.array(F.lit(a), F.lit(b)))])
-    return (
-        out.withColumnRenamed("v4_valid_rtt_count", "v4_rtt_count")
-        .withColumnRenamed("v6_valid_rtt_count", "v6_rtt_count")
-        .withColumn("measurement_id_v4", msm[F.col("target")][0])
-        .withColumn("measurement_id_v6", msm[F.col("target")][1])
-    )
 
 
-# ---------------------------------------------------------------------------- coverage
-def coverage(
-    spark: SparkSession,
-    day,
-    cohort: DataFrame,
-    members: DataFrame,
-    interval_s: dict[int, int],
-    processed: DataFrame,
-    silver_status: DataFrame,
-    quarantine: DataFrame,
-) -> DataFrame:
-    """Lưới đủ 24 giờ (giờ VN) × cohort × 4 measurement, kể cả giờ không có dữ liệu.
+# ---------------------------------------------------------------------------- CLI
+add_args = add_day_args
+validate = validate_day_args
 
-    Cohort = probe set trong `members`. Probe set không có probe nào của một address family vẫn có đủ dòng cho
-    measurement của af đó, với expected_probes = 0.
-    """
-    hours = spark.sql(
-        f"""SELECT explode(sequence(TIMESTAMP_NTZ'{day} 00:00:00', TIMESTAMP_NTZ'{day} 23:00:00', INTERVAL 1 HOUR)) AS event_hour_local"""
-    )
-    hours = hours.withColumn("event_hour_utc", F.to_utc_timestamp(F.col("event_hour_local").cast("timestamp"), REPORT_TZ)).withColumn(
-        "ictrl_dt", F.lit(day).cast("date")
-    )
-    msm = spark.createDataFrame(
-        [(m, af, t, interval_s.get(m, 240)) for m, (af, t) in MEASUREMENTS.items()],
-        "measurement_id int, af int, target string, interval_s int",
-    )
-    cohorts = members.select("probe_set_version").distinct()
-    expected = members.groupBy("probe_set_version", "af").agg(F.count("*").alias("expected_probes"))
-    grid = (
-        hours.crossJoin(msm)
-        .crossJoin(cohorts)
-        .join(expected, ["probe_set_version", "af"], "left")
-        .withColumn("expected_probes", F.coalesce("expected_probes", F.lit(0)).cast("long"))
-    )
 
-    observed = cohort.groupBy("probe_set_version", "measurement_id", "event_hour_utc").agg(
-        F.count("*").alias("results_total_raw"),
-        F.sum(F.col("is_eligible").cast("long")).alias("results_eligible"),
-        F.sum((F.col("public_status") != "public").cast("long")).alias("results_excluded_not_public"),
-        F.sum(((F.col("public_status") == "public") & F.col("clock_suspect")).cast("long")).alias("results_excluded_clock"),
-        F.countDistinct(F.when(F.col("is_eligible"), F.col("probe_id"))).alias("probes_observed"),
-        F.sum(F.col("is_source_corrected").cast("long")).alias("results_source_corrected"),
-        F.max("event_time").alias("max_event_time"),
-        F.max("silver_loaded_at").alias("silver_loaded_at"),
-    )
-
-    g = (
-        grid.join(observed, ["probe_set_version", "measurement_id", "event_hour_utc"], "left")
-        .join(processed, ["probe_set_version", "measurement_id", "event_hour_utc"], "left")
-        .join(silver_status, ["ictrl_dt", "measurement_id"], "left")
-        .join(quarantine, ["measurement_id", "event_hour_utc"], "left")
-    )
-    g = g.fillna(
-        0,
-        subset=[
-            "results_total_raw",
-            "results_eligible",
-            "results_excluded_not_public",
-            "results_excluded_clock",
-            "probes_observed",
-            "results_source_corrected",
-            "quarantine_records",
-            "overlap_unchanged_skipped",
-            "manifests",
-        ],
-    )
-    expected_results = F.col("expected_probes") * (F.lit(3600) / F.col("interval_s"))
-    return (
-        g.withColumn("expected_results", expected_results.cast("long"))
-        .withColumn(
-            "data_state",
-            F.when(F.col("results_total_raw") > 0, "measured")
-            .when(F.col("manifests") > 0, "processed_no_results")
-            .otherwise("not_processed"),
-        )
-        .withColumn("silver_status", F.coalesce("silver_status", F.lit("not_built")))
-    )
+def run(args, m) -> int:
+    db = Trino.connect()
+    db.run_file(SQL_DIR / "ops.sql")
+    db.execute("CREATE SCHEMA IF NOT EXISTS gold")
+    ensure_probe_set_seed(db)
+    run_id = new_run_id("gold")
+    days = selected_days(args)
+    dq = DqRecorder(db, run_id)
+    try:
+        results = {str(d): build_day(db, d, run_id, dq) for d in days}
+        log_event("gold", "run_finished", run_id=run_id, results=results)
+        for status in ("published", "published_with_warnings", "blocked", "blocked_upstream"):
+            m.set(
+                "ripe_partition_days",
+                "Số ngày theo trạng thái công bố, lần chạy gần nhất",
+                sum(1 for r in results.values() if r == status),
+                layer="gold",
+                status=status,
+            )
+        push_freshness(db, m)
+        return 0 if "blocked" not in results.values() else 2
+    finally:
+        for severity, n in dq.failed.items():
+            m.set("ripe_dq_failed_checks", "Số kiểm tra chất lượng thất bại, lần chạy gần nhất", n, layer="gold", severity=severity)

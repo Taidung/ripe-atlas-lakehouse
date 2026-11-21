@@ -9,7 +9,8 @@ Batch pipeline phân tích độ trễ và mất gói từ RIPE Atlas public pro
 | 2001 | IPv6 | k.root-servers.net |
 | 2004 | IPv6 | f.root-servers.net |
 
-Kiến trúc: dlt → SeaweedFS (S3) → Spark/Iceberg (Nessie catalog) → Trino → Superset.
+Kiến trúc: dlt → SeaweedFS (S3) → Iceberg (Nessie catalog) ← dbt trên Trino (Bronze/Silver/Gold) → Superset.
+Kiểm tra chất lượng bằng dbt test; điều phối bằng Airflow; giám sát bằng Prometheus/Pushgateway/Grafana.
 
 Tài liệu:
 - Thiết kế: `docs/design.md`
@@ -27,15 +28,13 @@ RIPE Atlas API
    │  ingestion/        dlt + HTTP client: API -> jsonl.gz + manifest           (Python, container `ingestion`)
    ▼
 storage/                SeaweedFS (bucket staging, warehouse) + Nessie catalog  (cấu hình S3: storage/seaweedfs/s3.json)
-   │  transformation/   Spark/Iceberg: staging -> Bronze -> Silver -> Gold      (job: jobs/, thư viện: lakehouse/, DDL: sql/)
-   │  quality/          package `dq`: GX suite, kiểm tra SCD2/đối soát/nhất quán, ghi ops.dq_result
+   │  transformation/   dbt trên Trino: staging -> Bronze -> Silver -> Gold     (model/test: dbt/, runner: lakehouse/, DDL: sql/)
    ▼
 serving/                Trino (SQL) + Superset (dashboard dựng bằng code)
-orchestration/          Airflow DAG: chạy ingestion và job Spark theo giờ / backfill
+orchestration/          Airflow DAG: chạy container ingestion và transform theo giờ / backfill
 observability/          Pushgateway + Prometheus + Grafana (dashboard và cảnh báo)
-governance/             OpenMetadata: catalog, mô tả, glossary, lineage
-config/                 dùng chung: probe_sets/*.json, metrics.json (Gold, Superset, OpenMetadata đọc cùng file)
-tests/                  chia theo thành phần: ingestion/, transformation/, quality/, contract/, integration/
+config/                 dùng chung: probe_sets/*.json, metrics.json (Superset và job crosscheck đọc cùng file)
+tests/                  chia theo thành phần: ingestion/, transformation/, contract/, integration/
 docs/                   thiết kế, data contract, runbook, báo cáo kiểm thử, ADR
 ```
 
@@ -45,10 +44,10 @@ Tìm nhanh:
 |---|---|
 | Gọi API, retry, phân trang | `ingestion/api_client.py` |
 | Ghi staging, manifest, khử trùng | `ingestion/staging_store.py`, `ingestion/result_records.py` |
-| Logic Bronze / Silver (SCD2, as-of join) / Gold | `transformation/lakehouse/{bronze,silver,gold}.py` |
-| Entry point của từng job Spark | `transformation/jobs/*.py` |
+| Logic Bronze / Silver (SCD2, as-of join) / Gold | `transformation/dbt/models/{bronze,silver,gold}/` |
+| Runner từng bước (chọn manifest, gọi dbt, công bố) | `transformation/lakehouse/{bronze,silver,gold}.py` |
 | Giao thức công bố partition | `transformation/lakehouse/publication.py` |
-| Rule chất lượng dữ liệu | `quality/dq/gx_suites.py`, `quality/dq/checks.py` |
+| Rule chất lượng dữ liệu | `transformation/dbt/models/*/*.yml`, `transformation/dbt/tests/`, `transformation/dbt/macros/tests.sql` |
 | Định nghĩa metric | `config/metrics.json`, `docs/metric-dictionary.md` |
 | Dashboard Superset | `serving/superset/provision.py` |
 | Lịch chạy | `orchestration/airflow/dags/ripe_atlas_dags.py` |
@@ -75,11 +74,11 @@ python -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).dec
 
 | Lệnh | Service | RAM đo được |
 |---|---|---|
-| `docker compose up -d` | core: SeaweedFS, Nessie + Postgres, Spark | ≈ 1,4 GB |
-| `docker compose --profile analytics up -d` | core + Trino + Superset | ≈ 2,9–3,5 GB (Trino giới hạn 3 GB) |
+| `docker compose up -d` | core: SeaweedFS, Nessie + Postgres, Trino | ≈ 4,5 GB (Trino ≈ 2,9 GB, giới hạn 3 GB) |
+| `docker compose --profile analytics up -d` | core + Superset | thêm Superset + Postgres của nó |
 | `docker compose --profile all up -d` | toàn bộ service đã khai báo | — |
 
-Profile `jobs` chứa container ingestion, dùng qua `docker compose --profile jobs run --rm ingestion ...`. Profile `orchestration` (Airflow), `monitoring` (Prometheus/Grafana) và `governance` (OpenMetadata) ở mục 6–8. **Không đủ RAM để bật tất cả cùng lúc trên máy 16 GB**; xem `docs/test-report.md` §3.
+Profile `jobs` chứa container `ingestion` và `transform`, dùng qua `docker compose --profile jobs run --rm <service> ...`. Profile `orchestration` (Airflow) và `monitoring` (Prometheus/Grafana) ở mục 6–7. **Không đủ RAM để bật tất cả cùng lúc trên máy 16 GB**; xem `docs/test-report.md` §3.
 
 Cổng truy cập:
 
@@ -88,7 +87,6 @@ Cổng truy cập:
 | Superset | http://localhost:8088 (user `admin`, mật khẩu `SUPERSET_ADMIN_PASSWORD` trong `.env`) |
 | Trino | http://localhost:8081 |
 | Nessie | http://localhost:19120 |
-| Spark UI | http://localhost:4040 |
 | SeaweedFS S3 | http://localhost:8333 |
 
 Dừng stack, **giữ dữ liệu**:
@@ -99,17 +97,16 @@ docker compose --profile all down
 
 > ⚠️ Lệnh `docker compose --profile all down -v` **xoá toàn bộ volume**: dữ liệu SeaweedFS (staging + warehouse), lịch sử Nessie và metadata Superset. Không thể khôi phục.
 
-## 3. Kiểm tra tương thích Spark → Nessie → Trino
+## 3. Trino: một engine cho biến đổi và truy vấn
 
-```bash
-docker compose --profile analytics up -d
-bash tests/integration/smoke_compat.sh
-```
+| Catalog | Ai dùng | Quyền |
+|---|---|---|
+| `lakehouse` | dbt + runner (user `transform`) | Ghi Iceberg (nhánh Nessie `main`) |
+| `staging` | dbt Bronze (user `transform`) | Đọc file `.jsonl.gz` trên staging (connector Hive, metastore dạng file) |
+| `nessie` | Superset, DBeaver, mọi user khác | Chỉ đọc, khóa S3 `atlas-reader` |
 
-Script kiểm tra 3 điều:
-- Bảng do Spark ghi có cùng snapshot id và cùng số liệu khi đọc từ Trino.
-- Số dòng mọi bảng `bronze` và `silver` khớp giữa Spark và Trino.
-- In `PASS` khi tất cả khớp.
+Phân quyền theo user nằm ở `serving/trino/rules.json`. Trino không bật xác thực trong môi trường đồ án, nên đây là rào
+chắn nhầm lẫn chứ không phải bảo mật.
 
 ## 4. Ingestion → staging → Bronze
 
@@ -143,11 +140,12 @@ Chạy lại cùng cửa sổ là an toàn. Record trùng nội dung (cùng SHA-
 Staging → Bronze. Job chỉ đọc object có trong manifest hoàn tất, và bỏ qua manifest đã nạp:
 
 ```bash
-docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/bronze_ingest.py --entity metadata
-docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/bronze_ingest.py --entity ping_result_raw --start 2026-11-19T00:00:00Z --end 2026-11-19T02:00:00Z
+docker compose --profile jobs build transform   # sau mỗi lần sửa transformation/
+docker compose --profile jobs run --rm transform bronze --entity metadata
+docker compose --profile jobs run --rm transform bronze --entity ping_result_raw --start 2026-11-19T00:00:00Z --end 2026-11-19T02:00:00Z
 
 # Xử lý lại manifest đã nạp (idempotent: 0 dòng mới nếu dữ liệu không đổi)
-docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/bronze_ingest.py --entity ping_result_raw --start 2026-11-19T00:00:00Z --end 2026-11-19T02:00:00Z --reprocess
+docker compose --profile jobs run --rm transform bronze --entity ping_result_raw --start 2026-11-19T00:00:00Z --end 2026-11-19T02:00:00Z --reprocess
 ```
 
 Hợp đồng dữ liệu, quy tắc quarantine và cách phục hồi: `docs/data-contracts.md`.
@@ -156,13 +154,13 @@ Hợp đồng dữ liệu, quy tắc quarantine và cách phục hồi: `docs/da
 
 ```bash
 # Tính lại các ngày (giờ VN) chứa khoảng [start, end). Chạy lại an toàn: kết quả giống hệt
-docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/silver_build.py --start 2026-11-19T00:00:00Z --end 2026-11-19T03:00:00Z
+docker compose --profile jobs run --rm transform silver --start 2026-11-19T00:00:00Z --end 2026-11-19T03:00:00Z
 
 # Tính lại các ngày chỉ định
-docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/silver_build.py --dates 2026-11-19
+docker compose --profile jobs run --rm transform silver --dates 2026-11-19
 
 # Metadata probe đến muộn: tính lại các ngày có fact probe_sk = -1 nay đã có metadata
-docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/silver_build.py --repair-unknown
+docker compose --profile jobs run --rm transform silver --repair-unknown
 ```
 
 Mã thoát `2` nghĩa là có ngày bị chặn vì lỗi chất lượng critical. Khi đó partition giữ bản đã công bố trước đó.
@@ -174,24 +172,22 @@ docker compose exec trino trino --execute "SELECT table_name, ictrl_dt, measurem
 docker compose exec trino trino --execute "SELECT checked_at, table_name, severity, check_name, observed_value FROM nessie.ops.dq_result WHERE NOT success ORDER BY checked_at DESC LIMIT 20"
 ```
 
-Data Docs của GX: mở file `artifacts/gx/gx/uncommitted/data_docs/local_site/index.html` trên máy host.
-
 Mô hình, data dictionary và quy tắc chuẩn hóa: `docs/silver-model.md`.
 
 Integration test chặn công bố, chạy trên nhánh Nessie tạm, không làm bẩn `main`:
 
 ```bash
-bash tests/integration/dq_block_on_branch.sh 2026-11-19
+bash tests/integration/dq_block_on_branch.sh 2026-11-20
 ```
 
 ### Silver → Gold
 
 ```bash
 # Tính lại mọi Gold mart cho các ngày chỉ định (chỉ đọc partition Silver đã công bố)
-docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/gold_build.py --dates 2026-11-19
+docker compose --profile jobs run --rm transform gold --dates 2026-11-19
 
 # Kiểm chứng độc lập Gold so với Silver, và sai số percentile so với giá trị chính xác
-docker compose exec -T spark-iceberg spark-submit /opt/app/transformation/jobs/gold_crosscheck.py --date 2026-11-19
+docker compose --profile jobs run --rm transform crosscheck --date 2026-11-19
 ```
 
 Định nghĩa metric và các mart: `docs/metric-dictionary.md`.
@@ -222,16 +218,15 @@ docker compose exec -T superset superset import-dashboards -p /app/project/expor
 # Unit test offline (không cần mạng hay Docker; dlt ghi thật vào thư mục tạm)
 docker compose --profile jobs run --rm --entrypoint python ingestion -m pytest -q tests/ingestion
 
-# Test transformation (Bronze/Silver/Gold) và quality (GX, SCD2, đối soát) trên Spark local trong container
-docker compose exec -T -w /opt/app spark-iceberg python -m pytest -q -p no:cacheprovider tests/transformation tests/quality
+# Runner biến đổi (offline) + kiểm tra dự án dbt biên dịch được
+uv run --frozen pytest -q tests/transformation
+docker compose --profile jobs run --rm --entrypoint dbt transform parse --project-dir /opt/app/transformation/dbt --profiles-dir /opt/app/transformation/dbt
 ```
 
+Logic dữ liệu được kiểm chứng trên dữ liệu thật: dbt test chạy cùng mỗi lần build, `crosscheck` so Gold với Silver,
+và `dq_block_on_branch.sh` kiểm tra giao thức công bố. So sánh với bản Spark trước đó: `docs/test-report.md` §6.
+
 > Trên Git Bash (Windows), thêm `MSYS_NO_PATHCONV=1` trước các lệnh `docker compose exec` có đường dẫn `/opt/...`. Nếu không, Git Bash tự đổi đường dẫn thành `C:/Program Files/Git/opt/...`.
-
-### Pipeline cũ (legacy)
-
-Job thế hệ đầu (`staging_to_bronze.py`, `bronze_to_silver.py`, SCD1) đã bị xoá khỏi repo; xem lại bằng `git show 13592d0:transformation/legacy/`.
-Các bảng `bronze.ping_results` và `silver.legacy_*` do chúng tạo ra vẫn còn trong catalog, chỉ xoá khi chủ đồ án đồng ý.
 
 ## 5. Truy vấn bằng SQL client qua Trino
 
@@ -244,7 +239,7 @@ Thông số kết nối, dùng được với DBeaver, DataGrip hay Trino CLI:
 | Catalog | `nessie` |
 | User | tên bất kỳ (môi trường đồ án chưa bật xác thực Trino) |
 
-Trino dùng credentials S3 chỉ đọc nên **không ghi được** dữ liệu. Mỗi truy vấn bị giới hạn 5 phút và 1 GB bộ nhớ (`serving/trino/config.properties`).
+Catalog `nessie` dùng credentials S3 chỉ đọc nên **không ghi được** dữ liệu; catalog ghi `lakehouse` chỉ mở cho user `transform`. Mỗi truy vấn bị giới hạn 5 phút và 1 GB bộ nhớ (`serving/trino/config.properties`).
 
 Truy vấn mẫu cho Gold và drill-down Silver: `docs/sql-examples.md`.
 
@@ -254,12 +249,12 @@ docker compose exec trino trino --execute "SELECT measurement_id, count(*), coun
 
 ## 6. Điều phối (Airflow)
 
-Airflow gọi Docker qua `/var/run/docker.sock` để chạy ingestion và job Spark. `DOCKER_GID` trong `.env` phải là GID nhóm
+Airflow gọi Docker qua `/var/run/docker.sock` để chạy container ingestion và transform. `DOCKER_GID` trong `.env` phải là GID nhóm
 sở hữu socket đó (Docker Desktop thường là 1001; cách kiểm tra ghi trong `.env.example`). Sai GID thì task báo
 `Permission denied`; xem `docs/runbook.md`.
 
-Airflow chạy ingestion bằng image `ripe-atlas-ingestion:0.2`, nên **sau khi sửa `ingestion/` hoặc `config/probe_sets/`
-phải build lại**: `docker compose --profile jobs build ingestion`. Job Spark thì không cần, vì code được mount trực tiếp.
+Airflow chạy image `ripe-atlas-ingestion:0.2` và `ripe-atlas-transform:0.1`; code nằm sẵn trong image, nên **sau khi sửa
+`ingestion/`, `transformation/` hoặc `config/` phải build lại**: `docker compose --profile jobs build ingestion transform`.
 
 ```bash
 docker compose --profile orchestration up -d
@@ -292,31 +287,29 @@ Mỗi cảnh báo có runbook riêng trong `docs/runbook.md`. Dashboard được
 python observability/grafana/build_dashboard.py
 ```
 
-## 8. Governance (OpenMetadata)
+## 8. Catalog và lineage (dbt docs)
 
-Xem `docs/governance.md`.
-- OpenMetadata cần khoảng 2,1 GB RAM. Trên máy 16 GB, hãy chạy tuần tự từng nhóm (dừng Airflow và monitoring trước).
-- Khi dừng service, **luôn ghi rõ tên service**: `docker compose --profile X stop` mà không có tên sẽ dừng cả core.
+Mô tả bảng/cột, test và lineage staging → Bronze → Silver → Gold sinh từ dự án dbt (cần Trino đang chạy):
 
 ```bash
-docker compose --profile analytics --profile governance up -d om-db om-search om-server trino superset superset-db
-docker compose --profile governance run --rm om-ingestion
+docker compose --profile jobs run --rm -p 8580:8580 --entrypoint sh transform -c "cd /opt/app/transformation/dbt && dbt docs generate --profiles-dir . && dbt docs serve --profiles-dir . --port 8580 --host 0.0.0.0 --no-browser"
 ```
 
-Mở http://localhost:8585.
+Mở http://localhost:8580. Từ điển dữ liệu đầy đủ: `docs/data-dictionary.md`; phân quyền và lineage: `docs/governance.md`.
+Khi dừng service, **luôn ghi rõ tên service**: `docker compose --profile X stop` mà không có tên sẽ dừng cả core.
 
 ## 9. CI
 
 | Workflow | Khi chạy | Nội dung |
 |---|---|---|
-| `.github/workflows/ci.yml` | PR, push | Offline: ruff, kiểm tra cấu hình Compose/JSON, unit + contract test, build image Spark, test Spark |
-| `.github/workflows/integration.yml` | Thủ công hoặc hằng đêm | Stack thật: 1 giờ dữ liệu dev → Gold, smoke test, idempotency, chặn công bố khi lỗi DQ, Superset |
+| `.github/workflows/ci.yml` | PR, push | Offline: ruff, kiểm tra cấu hình Compose/JSON/seed, unit + contract test, build image transform, `dbt parse` |
+| `.github/workflows/integration.yml` | Thủ công hoặc hằng đêm | Stack thật: 1 giờ dữ liệu dev → Gold, crosscheck, idempotency, chặn công bố khi lỗi DQ, Superset |
 | `.github/workflows/live-api.yml` | Thủ công hoặc hằng tuần | Contract test với RIPE Atlas API thật |
 
 Chạy lint và test tại máy giống CI:
 
 ```bash
-uv run --frozen ruff check ingestion transformation quality serving orchestration observability governance tests
+uv run --frozen ruff check ingestion transformation serving orchestration observability tests
 uv run --frozen pytest -q
 ```
 
@@ -332,7 +325,7 @@ uv run --frozen pytest -q
 | `docs/metric-dictionary.md` | Từ điển metric |
 | `docs/dashboard-spec.md` | Đặc tả dashboard |
 | `docs/sql-examples.md` | Truy vấn mẫu |
-| `docs/governance.md` | Governance |
+| `docs/governance.md` | Governance: catalog, phân quyền, lineage |
 | `docs/runbook.md` | Runbook |
 | `docs/test-report.md` | Báo cáo kiểm thử |
 | `docs/compatibility.md` | Phiên bản đã kiểm chứng |

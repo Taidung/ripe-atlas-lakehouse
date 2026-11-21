@@ -1,4 +1,4 @@
-"""Đẩy metric job Spark (Bronze/Silver/Gold) lên Pushgateway khi job kết thúc. Cùng quy ước với ingestion/metrics.py:
+"""Đẩy metric job transform (Bronze/Silver/Gold) lên Pushgateway khi job kết thúc. Cùng quy ước với ingestion/metrics.py:
 - group {job=ripe_pipeline, stage, run_type} chứa số liệu lần chạy gần nhất (PUT thay thế toàn bộ group), nên một
   lần backfill hay chạy tay không ghi đè số liệu của lịch chạy chính;
 - group {stage, run_type, outcome} chứa mốc thời gian thành công/thất bại, nên lần lỗi không xóa mốc thành công;

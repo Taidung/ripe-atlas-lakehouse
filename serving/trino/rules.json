@@ -1,0 +1,26 @@
+{
+  "catalogs": [
+    {
+      "user": "transform",
+      "catalog": "(lakehouse|lakehouse_dqtest|staging|nessie|system)",
+      "allow": "all"
+    },
+    {
+      "catalog": "(nessie|system)",
+      "allow": "read-only"
+    },
+    {
+      "catalog": ".*",
+      "allow": "none"
+    }
+  ],
+  "procedures": [
+    {
+      "user": "transform",
+      "catalog": "(lakehouse|lakehouse_dqtest|staging|system)",
+      "schema": ".*",
+      "procedure": ".*",
+      "privileges": ["EXECUTE"]
+    }
+  ]
+}

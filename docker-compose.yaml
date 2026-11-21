@@ -7,41 +7,6 @@ x-logging: &default-logging
     max-file: "5"
 
 services:
-  spark-iceberg:
-    logging: *default-logging
-    # Spark 3.5.5 / Scala 2.12.18 / Java 17.0.14 / Iceberg 1.8.1 (đã đo trong container, xem docs/compatibility.md).
-    # Build từ transformation/Dockerfile: base tabulario/spark-iceberg pin digest + jar S3A nhúng sẵn.
-    build: ./transformation
-    image: ripe-atlas-spark:3.5.5-iceberg1.8.1
-    restart: unless-stopped
-    ports:
-      - "8889:8888"
-      - "4040:4040"
-    environment:
-      AWS_ACCESS_KEY_ID: ${S3_PROCESSING_ACCESS_KEY:?Set S3_PROCESSING_ACCESS_KEY in .env}
-      AWS_SECRET_ACCESS_KEY: ${S3_PROCESSING_SECRET_KEY:?Set S3_PROCESSING_SECRET_KEY in .env}
-      AWS_REGION: us-east-1
-      PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-http://pushgateway:9091}
-    volumes:
-      - ./transformation/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
-      # Mã nguồn mount chỉ đọc (PYTHONPATH trong image trỏ tới hai thư mục này):
-      #   transformation/: job Spark (jobs/), package lakehouse/, DDL (sql/)
-      #   quality/:        package dq/ (GX suite, kiểm tra SCD2/đối soát, ghi ops.dq_result)
-      - ./transformation:/opt/app/transformation:ro
-      - ./quality:/opt/app/quality:ro
-      - ./tests:/opt/app/tests:ro
-      # probe set + metrics.json (định nghĩa metric dùng chung Gold/Superset/OpenMetadata)
-      - ./config:/opt/app/config:ro
-      # Kết quả GX (validation results, Data Docs HTML); không commit.
-      - ./artifacts:/opt/app/artifacts
-    networks:
-      - lakehouse
-    depends_on:
-      nessie:
-        condition: service_healthy
-      init-buckets:
-        condition: service_completed_successfully
-
   nessie:
     logging: *default-logging
     image: ghcr.io/projectnessie/nessie:0.108.8@sha256:aee5e959530b60d5e9bceb444e0b0edc8cb3cadd74a3a3e930e28591288d60da
@@ -256,21 +221,50 @@ services:
     networks:
       - lakehouse
 
-  # ---------------------------------------------------------------- analytics
+  transform:
+    logging: *default-logging
+    # Runner biến đổi + dbt (python -m lakehouse). Không có engine riêng: Trino xử lý dữ liệu.
+    # Airflow chạy image này qua TransformOperator; code nằm sẵn trong image -> build lại sau khi sửa transformation/.
+    build:
+      context: .
+      dockerfile: transformation/Dockerfile
+    image: ripe-atlas-transform:0.1
+    profiles: ["jobs", "all"]
+    environment:
+      TRINO_HOST: trino
+      TRINO_PORT: "8080"
+      # Identity atlas-processing: liệt kê/đọc manifest trên staging (dữ liệu do Trino đọc).
+      S3_PROCESSING_ACCESS_KEY: ${S3_PROCESSING_ACCESS_KEY:?Set S3_PROCESSING_ACCESS_KEY in .env}
+      S3_PROCESSING_SECRET_KEY: ${S3_PROCESSING_SECRET_KEY:?Set S3_PROCESSING_SECRET_KEY in .env}
+      S3_ENDPOINT: http://s3:8333
+      PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-http://pushgateway:9091}
+    depends_on:
+      trino:
+        condition: service_healthy
+    networks:
+      - lakehouse
+
+  # ---------------------------------------------------------------- query + transform engine
+  # Trino vừa là engine biến đổi (dbt, user `transform`, catalog `lakehouse` + `staging`) vừa phục vụ truy vấn
+  # (Superset, DBeaver, catalog `nessie` chỉ đọc). Thuộc nhóm core vì pipeline cần Trino để chạy.
   trino:
     logging: *default-logging
     image: trinodb/trino:484@sha256:2704eb53935af5e582d63d6033e9bf99d20c325e9b0e30b1016ef59a4773979f
-    profiles: ["analytics", "all"]
     restart: unless-stopped
     ports:
       - "8081:8080"
     environment:
-      # Trino chỉ đọc warehouse: dùng identity atlas-reader (Read/List warehouse).
+      # Catalog `nessie`: identity atlas-reader (chỉ Read/List warehouse).
       S3_SERVING_ACCESS_KEY: ${S3_SERVING_ACCESS_KEY:?Set S3_SERVING_ACCESS_KEY in .env}
       S3_SERVING_SECRET_KEY: ${S3_SERVING_SECRET_KEY:?Set S3_SERVING_SECRET_KEY in .env}
+      # Catalog `lakehouse`, `staging`: identity atlas-processing (đọc staging, ghi warehouse); chỉ user transform dùng.
+      S3_PROCESSING_ACCESS_KEY: ${S3_PROCESSING_ACCESS_KEY:?Set S3_PROCESSING_ACCESS_KEY in .env}
+      S3_PROCESSING_SECRET_KEY: ${S3_PROCESSING_SECRET_KEY:?Set S3_PROCESSING_SECRET_KEY in .env}
     volumes:
       - ./serving/trino/catalog:/etc/trino/catalog:ro
       - ./serving/trino/config.properties:/etc/trino/config.properties:ro
+      - ./serving/trino/access-control.properties:/etc/trino/access-control.properties:ro
+      - ./serving/trino/rules.json:/etc/trino/rules.json:ro
     mem_limit: 3g
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/v1/info"]
@@ -283,6 +277,8 @@ services:
         condition: service_healthy
       s3:
         condition: service_healthy
+      init-buckets:
+        condition: service_completed_successfully
     networks:
       - lakehouse
 
@@ -374,8 +370,8 @@ services:
       - lakehouse
 
   # Airflow standalone (api-server + scheduler + dag-processor + triggerer trong một container, LocalExecutor).
-  # docker.sock được mount để task tạo container ingestion và exec spark-submit: quyền tương đương root trên Docker
-  # host, chấp nhận cho môi trường đồ án local (docs/adr/0002-orchestration.md).
+  # docker.sock được mount để task tạo container ingestion / transform: quyền tương đương root trên Docker host,
+  # chấp nhận cho môi trường đồ án local (docs/adr/0002-orchestration.md).
   airflow:
     logging: *default-logging
     image: apache/airflow:3.4.0-python3.11@sha256:be92e15d57c5be726fc39a91cd09cce8f7488483b67979e0fb74c1a2c7cfb4e2
@@ -399,9 +395,12 @@ services:
       # Task runner gọi Execution API qua base_url: phải là cổng TRONG container (8080), không phải cổng host 8090.
       AIRFLOW__API__BASE_URL: http://localhost:8080
       AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "60"
-      # Biến chuyển tiếp cho container ingestion (chỉ khóa ghi staging; không có khóa Spark/Trino/admin).
+      # Biến chuyển tiếp cho container ingestion (chỉ khóa ghi staging) và transform (khóa atlas-processing để
+      # đọc manifest); không có khóa admin.
       S3_INGEST_ACCESS_KEY: ${S3_INGEST_ACCESS_KEY}
       S3_INGEST_SECRET_KEY: ${S3_INGEST_SECRET_KEY}
+      S3_PROCESSING_ACCESS_KEY: ${S3_PROCESSING_ACCESS_KEY}
+      S3_PROCESSING_SECRET_KEY: ${S3_PROCESSING_SECRET_KEY}
       STAGING_S3_ENDPOINT: http://s3:8333
       STAGING_BUCKET: staging
       PROBE_SET_VERSION: ${PROBE_SET_VERSION:-dev-200-v1}
@@ -409,8 +408,8 @@ services:
       ATLAS_CONCURRENCY: ${ATLAS_CONCURRENCY:-2}
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-http://pushgateway:9091}
       LAKEHOUSE_NETWORK: ripe-atlas-lakehouse_lakehouse
-      SPARK_CONTAINER: ripe-atlas-lakehouse-spark-iceberg-1
       INGEST_IMAGE: ripe-atlas-ingestion:0.2
+      TRANSFORM_IMAGE: ripe-atlas-transform:0.1
     ports:
       - "8090:8080"
     volumes:
@@ -425,116 +424,6 @@ services:
     mem_limit: 2g
     depends_on:
       airflow-db:
-        condition: service_healthy
-    networks:
-      - lakehouse
-
-  # ---------------------------------------------------------------- governance (OpenMetadata)
-  # OM 2.0.8 không kèm Airflow riêng (PIPELINE_SERVICE_CLIENT_ENABLED=false); ingestion metadata chạy bằng container
-  # om-ingestion (openmetadata-ingestion 2.0.8.0) qua governance/openmetadata/run_ingestion.py.
-  om-db:
-    logging: *default-logging
-    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
-    profiles: ["governance", "all"]
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: openmetadata_db
-      POSTGRES_USER: openmetadata_user
-      POSTGRES_PASSWORD: ${OM_DB_PASSWORD:?Set OM_DB_PASSWORD in .env}
-    volumes:
-      - om_db_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U openmetadata_user -d openmetadata_db"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - lakehouse
-
-  om-search:
-    logging: *default-logging
-    image: opensearchproject/opensearch:2.19.2@sha256:69588c664014fa3d3260ed5dd337f8538fec94790dad00bfbe92301eaaaac240
-    profiles: ["governance", "all"]
-    restart: unless-stopped
-    environment:
-      discovery.type: single-node
-      DISABLE_SECURITY_PLUGIN: "true"
-      DISABLE_INSTALL_DEMO_CONFIG: "true"
-      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
-    volumes:
-      - om_search_data:/usr/share/opensearch/data
-    mem_limit: 1g
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health | grep -qE 'green|yellow'"]
-      interval: 15s
-      timeout: 10s
-      retries: 20
-    networks:
-      - lakehouse
-
-  om-migrate:
-    logging: *default-logging
-    image: openmetadata/server:2.0.8@sha256:df3c3fef9014c23876f04b06db14b9556a63fc5fd8777ab7ddb80d41e4230ab4
-    profiles: ["governance", "all"]
-    command: ["./bootstrap/openmetadata-ops.sh", "migrate"]
-    environment: &om_env
-      DB_DRIVER_CLASS: org.postgresql.Driver
-      DB_SCHEME: postgresql
-      DB_HOST: om-db
-      DB_PORT: "5432"
-      DB_USER: openmetadata_user
-      DB_USER_PASSWORD: ${OM_DB_PASSWORD}
-      OM_DATABASE: openmetadata_db
-      DB_PARAMS: allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC
-      SEARCH_TYPE: opensearch
-      ELASTICSEARCH_HOST: om-search
-      ELASTICSEARCH_PORT: "9200"
-      ELASTICSEARCH_SCHEME: http
-      PIPELINE_SERVICE_CLIENT_ENABLED: "false"
-      OPENMETADATA_HEAP_OPTS: -Xmx1G -Xms1G
-    depends_on:
-      om-db:
-        condition: service_healthy
-      om-search:
-        condition: service_healthy
-    networks:
-      - lakehouse
-
-  om-server:
-    logging: *default-logging
-    image: openmetadata/server:2.0.8@sha256:df3c3fef9014c23876f04b06db14b9556a63fc5fd8777ab7ddb80d41e4230ab4
-    profiles: ["governance", "all"]
-    restart: unless-stopped
-    environment: *om_env
-    ports:
-      - "8585:8585"
-    mem_limit: 1600m
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8586/healthcheck || curl -fs http://localhost:8586/healthcheck"]
-      interval: 15s
-      timeout: 10s
-      retries: 30
-      start_period: 60s
-    depends_on:
-      om-migrate:
-        condition: service_completed_successfully
-    networks:
-      - lakehouse
-
-  om-ingestion:
-    logging: *default-logging
-    build: ./governance/openmetadata
-    image: ripe-atlas-om-ingestion:2.0.8.0
-    profiles: ["governance", "all"]
-    command: ["python", "/app/governance/run_ingestion.py"]
-    environment:
-      OM_HOST: http://om-server:8585
-      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD}
-    volumes:
-      - ./governance/openmetadata:/app/governance:ro
-      - ./config/metrics.json:/app/config/metrics.json:ro
-    depends_on:
-      om-server:
         condition: service_healthy
     networks:
       - lakehouse
@@ -639,5 +528,3 @@ volumes:
   grafana_data:
   airflow_db_data:
   airflow_logs:
-  om_db_data:
-  om_search_data:

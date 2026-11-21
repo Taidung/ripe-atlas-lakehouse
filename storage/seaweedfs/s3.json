@@ -31,7 +31,7 @@
       ]
     },
     {
-      "name": "atlas-spark",
+      "name": "atlas-processing",
       "credentials": [
         {
           "accessKey": "${S3_PROCESSING_ACCESS_KEY}",

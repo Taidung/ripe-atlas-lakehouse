@@ -26,6 +26,10 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Artifact vận hành sinh ra lúc chạy (GX Data Docs, báo cáo test)
+# Artifact vận hành sinh ra lúc chạy (báo cáo test, bản xuất HTML)
 artifacts/
 reports/
+
+# dbt: thư mục sinh ra khi chạy
+transformation/dbt/target/
+transformation/dbt/logs/

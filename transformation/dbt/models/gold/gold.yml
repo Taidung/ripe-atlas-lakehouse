@@ -1,0 +1,52 @@
+version: 2
+
+# Gold: kiểm tra nhất quán giữa các mart (tests/gold/*.sql) và khóa/quan hệ của quality_hourly_target.
+# Mọi kiểm tra ở đây là critical: lỗi -> không ghi mart nào của ngày, partition = blocked.
+
+models:
+  - name: quality_hourly_target_candidate
+    description: quality_hourly_target của một ngày, chưa công bố.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [probe_set_version, measurement_id, event_hour_utc]
+      - expression_is_true:
+          name: gold_target_packets_lost_non_negative
+          arguments:
+            expression: packets_lost >= 0
+      - expression_is_true:
+          name: gold_target_rtt_sum_non_negative
+          arguments:
+            expression: rtt_sum_ms >= 0
+      - expression_is_true:
+          name: gold_target_sent_ge_lost
+          arguments:
+            expression: packets_sent >= packets_lost
+    columns:
+      - name: ictrl_dt
+        data_tests: [not_null]
+      - name: event_hour_utc
+        data_tests: [not_null]
+      - name: event_hour_local
+        data_tests: [not_null]
+      - name: probe_set_version
+        data_tests: [not_null]
+      - name: measurement_id
+        data_tests: [not_null]
+
+  - name: quality_hourly_target
+    description: >
+      Chất lượng theo giờ × cohort × measurement (target, address family). Chỉ lưu tử số/mẫu số:
+      loss = packets_lost / packets_sent, RTT trung bình = rtt_sum_ms / rtt_count (tính sau khi gộp).
+  - name: quality_hourly_country
+    description: Như quality_hourly_target, thêm chiều quốc gia (ZZ = chưa biết).
+  - name: quality_hourly_asn
+    description: Như quality_hourly_target, thêm chiều ASN (-1 = chưa biết).
+  - name: quality_hourly_probe
+    description: Như quality_hourly_target, thêm chiều probe.
+  - name: rtt_histogram_hourly
+    description: Số reply hợp lệ theo bucket RTT log (tỷ lệ 1,02), dùng để tính percentile sau khi gộp.
+  - name: ipv4_ipv6_paired_hourly
+    description: Cặp đo IPv4/IPv6 của cùng probe và target cách nhau <= 120 giây, cùng số result không ghép được.
+  - name: coverage_hourly
+    description: Lưới 24 giờ × cohort × measurement; kỳ vọng và thực có, trạng thái dữ liệu (measured, processed_no_results, not_processed).

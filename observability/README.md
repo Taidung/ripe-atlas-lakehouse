@@ -1,6 +1,6 @@
 # observability/: metric, dashboard và cảnh báo (profile `monitoring`)
 
-Job ingestion và Spark đẩy metric lên **Pushgateway** khi kết thúc.
+Job ingestion và transform đẩy metric lên **Pushgateway** khi kết thúc.
 - Grouping key: job, measurement, ngày/giờ.
 - Outcome (thành công / thất bại) được tách thành group riêng.
 

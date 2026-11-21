@@ -1,5 +1,8 @@
 # Báo cáo kiểm thử
 
+> **Cập nhật 2026-11-21:** tầng biến đổi đã chuyển từ Spark sang dbt trên Trino (ADR-0003). Mục 1–5 ghi kết quả của bản
+> Spark (đến 2026-11-20), giữ làm bằng chứng lịch sử. Kết quả của bản hiện tại ở **§6**.
+
 Mọi số liệu dưới đây là **số đo thật** trong ngày 2026-11-18/19.
 
 **Môi trường:** Windows 11, 12 CPU logic, RAM host 15,8 GB, Docker Desktop 29.6.2 với 8,2 GB cho VM WSL, Docker data trên ổ D:.
@@ -9,7 +12,10 @@ Mọi số liệu dưới đây là **số đo thật** trong ngày 2026-11-18/1
 - Probe set `strat-k2-c100-v1` (4.324 v4 / 2.897 v6): giờ 02:00–03:00Z 19/11.
 - Ngày 19/11 theo giờ VN: Silver có **307.789 result** và **932.435 reply**.
 
-## 1. Ma trận kiểm thử
+#> **Cập nhật 2026-11-21:** tầng biến đổi đã chuyển từ Spark sang dbt trên Trino (ADR-0003). Mục 1–5 ghi kết quả của bản
+> Spark (đến 2026-11-20), giữ làm bằng chứng lịch sử. Kết quả của bản hiện tại ở **§6**.
+
+# 1. Ma trận kiểm thử
 
 | Loại | Phạm vi | Lệnh | Kết quả |
 |---|---|---|---|
@@ -25,7 +31,10 @@ Mọi số liệu dưới đây là **số đo thật** trong ngày 2026-11-18/1
 | Cảnh báo | 5 tình huống thử + cảnh báo thật | Push metric giả, dừng service | Xem §5 |
 | Lint | ruff | `ruff check …` | Sạch |
 
-## 2. Idempotency, dữ liệu đến muộn, backfill, phục hồi
+#> **Cập nhật 2026-11-21:** tầng biến đổi đã chuyển từ Spark sang dbt trên Trino (ADR-0003). Mục 1–5 ghi kết quả của bản
+> Spark (đến 2026-11-20), giữ làm bằng chứng lịch sử. Kết quả của bản hiện tại ở **§6**.
+
+# 2. Idempotency, dữ liệu đến muộn, backfill, phục hồi
 
 | Tình huống | Cách thử | Kết quả đo |
 |---|---|---|
@@ -43,7 +52,10 @@ Mọi số liệu dưới đây là **số đo thật** trong ngày 2026-11-18/1
 | Hạ tầng quá tải (DNS Docker lỗi) | Sự cố thật: RAM host cạn | S3 client hết 5 lần retry → Silver fail **trước** commit; bản công bố trước giữ nguyên |
 | Backfill | `python -m ingestion backfill` và DAG `ripe_atlas_backfill` | Cùng code, `run_type = backfill` trong manifest và metric; pool `lakehouse_writer` cấm ghi song song |
 
-## 3. Hiệu năng (đo thật)
+#> **Cập nhật 2026-11-21:** tầng biến đổi đã chuyển từ Spark sang dbt trên Trino (ADR-0003). Mục 1–5 ghi kết quả của bản
+> Spark (đến 2026-11-20), giữ làm bằng chứng lịch sử. Kết quả của bản hiện tại ở **§6**.
+
+# 3. Hiệu năng (đo thật)
 
 | Phép đo | Giá trị |
 |---|---|
@@ -57,7 +69,10 @@ Mọi số liệu dưới đây là **số đo thật** trong ngày 2026-11-18/1
 | RAM nhàn rỗi | Core ≈ 1,4 GB; Trino 0,9–2,3 GB (heap tối đa 2,4 GB); Superset 0,25 GB; monitoring ≈ 0,5 GB; Airflow 0,15 GB; OpenMetadata ≈ 2,1 GB (server 1 GB + OpenSearch 1 GB + DB) |
 | File Iceberg | Bronze sau 6 lần nạp theo giờ: 6–8 file mỗi partition ngày, mỗi file ~200 KB → compaction hằng ngày |
 
-### 3.1 Thử bật full stack khi Spark không chạy thường trực (2026-11-19)
+##> **Cập nhật 2026-11-21:** tầng biến đổi đã chuyển từ Spark sang dbt trên Trino (ADR-0003). Mục 1–5 ghi kết quả của bản
+> Spark (đến 2026-11-20), giữ làm bằng chứng lịch sử. Kết quả của bản hiện tại ở **§6**.
+
+# 3.1 Thử bật full stack khi Spark không chạy thường trực (2026-11-19)
 
 Mục đích: xem bỏ container Spark thường trực (hoặc thay Spark bằng dbt + Trino) có đủ chỗ cho full stack không.
 
@@ -83,7 +98,10 @@ Kết luận:
   - Tiếp tục chạy tuần tự từng nhóm (như các phase trước).
   - Hoặc đóng bớt ứng dụng nặng trên Windows và đặt `autoMemoryReclaim=dropCache` trong `.wslconfig` để WSL trả cache về cho Windows, rồi đo lại.
 
-## 4. OpenMetadata (2.0.8, kiểm tra bằng API)
+#> **Cập nhật 2026-11-21:** tầng biến đổi đã chuyển từ Spark sang dbt trên Trino (ADR-0003). Mục 1–5 ghi kết quả của bản
+> Spark (đến 2026-11-20), giữ làm bằng chứng lịch sử. Kết quả của bản hiện tại ở **§6**.
+
+# 4. OpenMetadata (2.0.8, kiểm tra bằng API)
 
 - **Connector Trino:** 100% thành công (26 bản ghi; 9 bảng legacy bị lọc như cấu hình).
 - **Connector Superset:** 100% (92 bản ghi). Có dashboard "Global Network Quality" với 23 chart.
@@ -93,7 +111,10 @@ Kết luận:
   - Quanh `silver.fact_ping_result`: 23 node, 8 cạnh upstream, 22 cạnh downstream, 171 cặp column-level.
   - `gold.quality_hourly_probe` có 2 node Superset ở downstream, **do connector tự suy ra**.
 
-## 5. Cảnh báo (Grafana 13.3.1, 8 rule)
+#> **Cập nhật 2026-11-21:** tầng biến đổi đã chuyển từ Spark sang dbt trên Trino (ADR-0003). Mục 1–5 ghi kết quả của bản
+> Spark (đến 2026-11-20), giữ làm bằng chứng lịch sử. Kết quả của bản hiện tại ở **§6**.
+
+# 5. Cảnh báo (Grafana 13.3.1, 8 rule)
 
 | Tình huống | Thời điểm | Kết quả |
 |---|---|---|
@@ -107,7 +128,10 @@ Kết luận:
 | Sau khi xóa metric thử và bật lại node-exporter | 08:00Z | 4 cảnh báo thử trở về Normal |
 | **False positive phát hiện được:** đĩa Docker | baseline | `size − avail` báo 84,9 GB vì ext4 giữ 5% của đĩa ảo 1 TB. Đã sửa thành `size − free` = 29,9 GB (khớp file vhdx 29,6 GB) |
 
-## 6. Vấn đề phát hiện khi kiểm thử và đã sửa
+#> **Cập nhật 2026-11-21:** tầng biến đổi đã chuyển từ Spark sang dbt trên Trino (ADR-0003). Mục 1–5 ghi kết quả của bản
+> Spark (đến 2026-11-20), giữ làm bằng chứng lịch sử. Kết quả của bản hiện tại ở **§6**.
+
+# 6. Vấn đề phát hiện khi kiểm thử và đã sửa
 
 1. Audit `ingest_manifest` bị ghi đè khi chạy `--reprocess` → chuyển sang append-only.
 2. Kiểm tra "suy giảm" bị sai lệch do thành phần probe thay đổi → chuyển sang so cùng probe (104 → 8 quốc gia).
@@ -120,7 +144,10 @@ Kết luận:
 9. Test cleanup chập chờn (độ phân giải mtime trên Windows) → cho phép tiêm thời gian vào test.
 10. cAdvisor không đọc được container trên Docker Desktop 29 + containerd → bỏ, dùng node-exporter và `docker stats`.
 
-## 7. Chưa kiểm thử hoặc còn thiếu
+#> **Cập nhật 2026-11-21:** tầng biến đổi đã chuyển từ Spark sang dbt trên Trino (ADR-0003). Mục 1–5 ghi kết quả của bản
+> Spark (đến 2026-11-20), giữ làm bằng chứng lịch sử. Kết quả của bản hiện tại ở **§6**.
+
+# 7. Chưa kiểm thử hoặc còn thiếu
 
 - **`ci.yml` đã xanh trên GitHub** (run 44488710698). Trước đó có 2 lỗi thật, đã sửa:
   - runner nhận HTTP lỗi từ Maven Central → thêm retry và mirror;
@@ -130,3 +157,36 @@ Kết luận:
 - **Chưa đo một ngày đầy đủ ở chế độ analysis** (~5,2 triệu result/ngày). Bộ nhớ Silver cho quy mô đó cần đo lại; có thể phải tính theo (ngày × measurement).
 - **Nessie GC** (dọn snapshot và file cũ) chưa triển khai.
 - **Ghi nhiều bảng nguyên tử bằng nhánh Nessie** (ghi trên nhánh, kiểm tra, rồi merge vào `main`) chưa triển khai. Hiện dùng snapshot pinning cho chiều Silver → Gold.
+
+## 6. Chuyển Spark → dbt + Trino (2026-11-21)
+
+Cách kiểm: chạy bản dbt trên cùng dữ liệu Bronze mà bản Spark đã xử lý, rồi so với snapshot Spark ngay trước đó bằng
+Iceberg time travel (`FOR VERSION AS OF`), `EXCEPT` hai chiều trên mọi cột (trừ run id, thời điểm nạp, khoá thay thế).
+
+| Phép kiểm | Kết quả |
+|---|---|
+| Bronze: nạp lại 1 giờ Spark đã nạp (`--reprocess`, 4 manifest, 10.866 dòng) | `rows_inserted = 0`, `rows_already_present = 10.866`: `record_uid` tính giống hệt Spark |
+| Bronze metadata: nạp lại 3 ngày manifest | 3 manifest đã nạp → 0 dòng mới; 1 manifest Spark chưa từng nạp → 200 dòng (đúng) |
+| Bronze: test lô (số dòng, `load_id`, tỷ lệ quarantine) | 3/3 PASS mỗi entity |
+| Silver `fact_ping_result` ngày 20/11 (76.810 dòng) | 0 dòng lệch mỗi chiều |
+| Silver `fact_ping_reply` ngày 20/11 (230.201 dòng) | 0 dòng lệch mỗi chiều |
+| `dim_probe` | Lệch 200/201 dòng: do Bronze vừa có thêm 200 snapshot metadata mà lần Spark trước chưa thấy, không phải do logic |
+| Gold ngày 20/11, 7 mart (so số thực làm tròn 4 chữ số) | 6 mart khớp tuyệt đối; `ipv4_ipv6_paired_hourly` lệch 9/2.712 dòng ở chữ số thứ tư của tổng RTT (thứ tự cộng số thực) |
+| `crosscheck` 19, 20, 21/11 | PASS cả 3 ngày; sai số percentile lớn nhất 0,96% / 0,95% / 0,93% (ngưỡng 2%) |
+| `dq_block_on_branch.sh 2026-11-20` (nhánh `dqtest`) | PASS: Silver exit 2 + `blocked`, snapshot công bố giữ nguyên, Gold dựng từ bản cũ (28/28 dòng), ngày rỗng không ghi đè, `main` không đổi |
+| Unit test runner + ingestion | 73 passed (18 mới cho runner) |
+| `dbt parse` trong image | OK |
+
+Thời gian và RAM (dev-200-v1, máy 15,8 GB, Docker 8,2 GB):
+
+| Việc | Thời gian | RAM |
+|---|---|---|
+| Silver 3 ngày (19/11: 387 nghìn result, 1,17 triệu reply) | 104 giây | Trino chạm giới hạn 3 GiB (JVM giữ heap), không lỗi; container transform ≤ 168 MiB |
+| Gold 3 ngày | 59 giây | như trên |
+| Silver 1 ngày nhỏ (20/11) | ≈ 35 giây | |
+| Image | `ripe-atlas-transform:0.1` 762 MB (image Spark trước đó ≈ 6,5 GB) | |
+
+Khác biệt có chủ đích so với bản Spark:
+- Khoá thay thế `probe_sk`/`measurement_sk` dùng `xxhash64` của Trino nên khác giá trị cũ; mọi ngày đã được tính lại.
+- JSON: Trino `try_cast` chấp nhận số dạng chuỗi (`"prb_id":"12"`), Spark trước đó coi là corrupt (`docs/data-contracts.md`).
+- Không còn container Spark chạy thường trực; đổi lại Trino là service core và gánh cả biến đổi.
