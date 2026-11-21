@@ -68,8 +68,9 @@ class Trino:
         )
 
 
-def insert_rows(db: Trino, table: str, columns: list[str], rows: list[tuple], chunk: int = 200) -> None:
-    """INSERT nhiều dòng bằng VALUES (dành cho bảng vận hành nhỏ: manifest, dq_result, partition_status)."""
+def insert_rows(db: Trino, table: str, rows: list[dict[str, Any]], chunk: int = 200) -> None:
+    """INSERT nhiều dòng (cùng bộ khóa) bằng VALUES, dành cho bảng vận hành nhỏ: manifest, dq_result."""
     for i in range(0, len(rows), chunk):
-        values = ",\n".join("(" + ", ".join(sql_str(v) for v in r) + ")" for r in rows[i : i + chunk])
-        db.execute(f"INSERT INTO {table} ({', '.join(columns)}) VALUES\n{values}")
+        batch = rows[i : i + chunk]
+        values = ",\n".join("(" + ", ".join(map(sql_str, r.values())) + ")" for r in batch)
+        db.execute(f"INSERT INTO {table} ({', '.join(batch[0])}) VALUES\n{values}")

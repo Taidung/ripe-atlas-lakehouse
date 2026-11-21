@@ -23,7 +23,7 @@ from datetime import date
 from lakehouse.common import SQL_DIR, add_day_args, iso_z, log_event, new_run_id, selected_days, sql_str, utc_now, validate_day_args
 from lakehouse.dbt_runner import dbt
 from lakehouse.dq import CRITICAL, DqRecorder, failed_names, from_dbt, has_critical_failure, has_warning, make_check
-from lakehouse.publication import PartitionStatus, set_partition_status
+from lakehouse.publication import PartitionStatus, push_partition_days, set_partition_status
 from lakehouse.trino_db import Trino
 
 FACT = "nessie.silver.fact_ping_result"
@@ -41,7 +41,7 @@ def build_dimensions(db: Trino, dq: DqRecorder, variables: dict) -> None:
         raise RuntimeError(f"dbt lỗi khi tính dimension: {[n.name for n in run.errors()]}")
     checks = from_dbt(run.tests())
     for name in ("dim_probe", "dim_measurement"):
-        mine = [c for c in checks if f"{name}_candidate" in c["details"]]
+        mine = [c for c in checks if c["model"] == f"{name}_candidate"]
         dq.write("silver", f"nessie.silver.{name}", "all", mine, None)
     if has_critical_failure(checks):
         raise RuntimeError(f"Dimension quality check failed (critical): {failed_names(checks, CRITICAL)}; facts not rebuilt")
@@ -67,8 +67,8 @@ def build_day(db: Trino, day: date, run_id: str, dq: DqRecorder) -> str:
     if run.errors():
         raise RuntimeError(f"{day}: dbt lỗi khi tính fact: {[n.name for n in run.errors()]}")
     checks = from_dbt(run.tests())
-    fact_checks = [c for c in checks if "fact_ping_reply_candidate" not in (c["details"] or "")]
-    reply_checks = [c for c in checks if "fact_ping_reply_candidate" in (c["details"] or "")]
+    reply_checks = [c for c in checks if c["model"] == "fact_ping_reply_candidate"]
+    fact_checks = [c for c in checks if c not in reply_checks]  # gồm cả test đối soát nhiều bảng
     fact_counts = _counts(db, "work.fact_ping_result_candidate", day)
     scope, now = f"ictrl_dt={day}", utc_now()
 
@@ -152,14 +152,7 @@ validate = validate_day_args
 
 
 def push_run_metrics(db: Trino, m, results: dict[str, str], days: list[date]) -> None:
-    for status in ("published", "published_with_warnings", "blocked", "empty"):
-        m.set(
-            "ripe_partition_days",
-            "Số ngày theo trạng thái công bố, lần chạy gần nhất",
-            sum(1 for r in results.values() if r == status),
-            layer="silver",
-            status=status,
-        )
+    push_partition_days(m, "silver", results, ("published", "published_with_warnings", "blocked", "empty"))
     if days:
         in_days = ", ".join(sql_str(d) for d in days)
         for mid, n in db.query(
@@ -185,5 +178,4 @@ def run(args, m) -> int:
         push_run_metrics(db, m, results, days)
         return 0 if "blocked" not in results.values() else 2
     finally:
-        for severity, n in dq.failed.items():
-            m.set("ripe_dq_failed_checks", "Số kiểm tra chất lượng thất bại, lần chạy gần nhất", n, layer="silver", severity=severity)
+        dq.push_metrics(m, "silver")

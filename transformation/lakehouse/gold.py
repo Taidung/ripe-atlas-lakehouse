@@ -28,6 +28,7 @@ from lakehouse.publication import (
     PartitionStatus,
     partition_statuses,
     published_snapshot,
+    push_partition_days,
     readable_measurements,
     set_partition_status,
 )
@@ -60,6 +61,14 @@ def ensure_probe_set_seed(db: Trino) -> None:
         run = dbt("seed", "probe_set_member", {})
         if not run.success:
             raise RuntimeError("dbt seed probe_set_member thất bại")
+
+
+def mart_counts(db: Trino, mart: str) -> dict[int, int]:
+    """measurement_id -> số dòng của mart nháp; một cặp IPv4/IPv6 tính cho cả hai measurement của cặp."""
+    source = f"work.{mart}_candidate"
+    if mart == "ipv4_ipv6_paired_hourly":
+        source += " CROSS JOIN UNNEST(ARRAY[measurement_id_v4, measurement_id_v6]) AS t(measurement_id)"
+    return dict(db.query(f"SELECT measurement_id, count(*) FROM {source} GROUP BY 1"))
 
 
 def mark_marts_blocked(db: Trino, day: date, measurement_ids: list[int], status: str, reason: str, run_id: str, dq_run_id: str):
@@ -116,7 +125,7 @@ def build_day(db: Trino, day: date, run_id: str, dq: DqRecorder) -> str:
     if not publish.success:
         raise RuntimeError(f"{day}: dbt lỗi khi ghi Gold: {[n.name for n in publish.errors()]}")
     snapshots = {k: db.latest_snapshot(f"gold.{k}") for k in MARTS}
-    counts = {k: db.scalar(f"SELECT count(*) FROM work.{k}_candidate") for k in MARTS}
+    counts = {k: mart_counts(db, k) for k in MARTS}
     dq.write("gold", "nessie.gold.*", scope, checks, snapshots["quality_hourly_target"])
 
     status = "published_with_warnings" if has_warning(checks) else "published"
@@ -134,7 +143,9 @@ def build_day(db: Trino, day: date, run_id: str, dq: DqRecorder) -> str:
             stale = silver_status.get(m) not in PUBLISHED
             note = f"silver latest run {silver_status.get(m)}; built from last published snapshot" if stale else None
             rows.append(
-                PartitionStatus("gold", f"nessie.gold.{k}", day, m, status, counts[k], run_id, dq.dq_run_id, snapshots[k], note, now)
+                PartitionStatus(
+                    "gold", f"nessie.gold.{k}", day, m, status, counts[k].get(m, 0), run_id, dq.dq_run_id, snapshots[k], note, now
+                )
             )
     set_partition_status(db, rows)
     log_event("gold", "day_written", ictrl_dt=str(day), status=status, rows=counts)
@@ -198,16 +209,8 @@ def run(args, m) -> int:
     try:
         results = {str(d): build_day(db, d, run_id, dq) for d in days}
         log_event("gold", "run_finished", run_id=run_id, results=results)
-        for status in ("published", "published_with_warnings", "blocked", "blocked_upstream"):
-            m.set(
-                "ripe_partition_days",
-                "Số ngày theo trạng thái công bố, lần chạy gần nhất",
-                sum(1 for r in results.values() if r == status),
-                layer="gold",
-                status=status,
-            )
+        push_partition_days(m, "gold", results, ("published", "published_with_warnings", "blocked", "blocked_upstream"))
         push_freshness(db, m)
         return 0 if "blocked" not in results.values() else 2
     finally:
-        for severity, n in dq.failed.items():
-            m.set("ripe_dq_failed_checks", "Số kiểm tra chất lượng thất bại, lần chạy gần nhất", n, layer="gold", severity=severity)
+        dq.push_metrics(m, "gold")

@@ -7,13 +7,14 @@ và tests/integration/dq_block_on_branch.sh. Ở đây kiểm tra phần thủ t
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime, timezone
 
 import pytest
 
 from lakehouse import bronze, dq
 from lakehouse.__main__ import parse
-from lakehouse.common import days_for_range, split_sql, sql_str
+from lakehouse.common import SQL_DIR, days_for_range, split_sql, sql_str
 from lakehouse.dbt_runner import NodeResult
 
 UTC = timezone.utc
@@ -95,8 +96,7 @@ def test_metadata_manifest_globs_cover_lookback_days():
 
 
 def test_pending_rows_carry_partition_and_manifest_context():
-    (row,) = bronze.pending_rows("ping_result_raw", [MANIFEST])
-    r = dict(zip(bronze.PENDING_COLUMNS, row, strict=True))
+    (r,) = bronze.pending_rows("ping_result_raw", [MANIFEST])
     assert (r["window_date"], r["window_hour"], r["msm_id"], r["part_ictrl_dt"]) == ("2026-11-21", "07", "1001", None)
     assert r["window_start_ts"] == int(datetime(2026, 11, 21, tzinfo=UTC).timestamp())
     assert r["manifest_staged_rows"] == 2919
@@ -104,10 +104,22 @@ def test_pending_rows_carry_partition_and_manifest_context():
 
 def test_audit_row_matches_ingest_manifest_columns():
     stats = {MANIFEST["manifest_path"]: {"read": 10, "valid": 9, "inserted": 4, "already_present": 5, "quarantined": 1}}
-    (row,) = bronze.audit_rows([MANIFEST], stats, "bronze-x", datetime(2026, 11, 21, tzinfo=UTC))
-    r = dict(zip(bronze.AUDIT_COLUMNS, row, strict=True))
+    (r,) = bronze.audit_rows([MANIFEST], stats, "bronze-x", datetime(2026, 11, 21, tzinfo=UTC))
     assert r["rows_inserted"] == 4 and r["rows_already_present"] == 5 and r["request_count"] == 2
     assert r["bronze_status"] == "loaded" and r["object_bytes"] == 120
+
+
+def _ddl_columns(table: str) -> list[str]:
+    """Tên cột của `table` trong transformation/sql/ops.sql (đúng thứ tự khai báo)."""
+    ddl = (SQL_DIR / "ops.sql").read_text(encoding="utf-8")
+    body = re.search(rf"CREATE TABLE IF NOT EXISTS {re.escape(table)} \((.*?)\n\)", ddl, re.S).group(1)
+    return re.findall(r"(?:^|,)\s*(\w+) (?:varchar|bigint|integer|date|boolean|timestamp)", body)
+
+
+def test_runner_rows_match_ddl_columns():
+    stats = {MANIFEST["manifest_path"]: dict.fromkeys(("read", "valid", "inserted", "already_present", "quarantined"), 0)}
+    assert list(bronze.pending_rows("ping_result_raw", [MANIFEST])[0]) == _ddl_columns("work.bronze_pending_object")
+    assert list(bronze.audit_rows([MANIFEST], stats, "b", datetime(2026, 11, 21, tzinfo=UTC))[0]) == _ddl_columns("bronze.ingest_manifest")
 
 
 def test_sql_literals_escape_and_type():
@@ -122,7 +134,7 @@ def test_split_sql_drops_comments_and_keeps_statements():
 
 
 def _test(status: str, severity: str) -> NodeResult:
-    return NodeResult("test.x", f"t_{status}_{severity}", "test", status, severity, 1, None, "fact_ping_result_candidate")
+    return NodeResult(f"t_{status}_{severity}", "test", status, severity, 1, None, "fact_ping_result_candidate")
 
 
 def test_dbt_test_results_map_to_critical_and_warn():
@@ -130,5 +142,5 @@ def test_dbt_test_results_map_to_critical_and_warn():
     checks = dq.from_dbt([_test("pass", "error"), _test("warn", "warn"), _test("skipped", "error")])
     assert [c["severity"] for c in checks] == ["critical", "warn"]  # test bị skip không ghi
     assert not dq.has_critical_failure(checks) and dq.has_warning(checks)
-    assert json.loads(checks[1]["details"])["model"] == "fact_ping_result_candidate"
+    assert checks[1]["model"] == json.loads(checks[1]["details"])["model"] == "fact_ping_result_candidate"
     assert dq.has_critical_failure(dq.from_dbt([_test("fail", "error")]))

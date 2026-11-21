@@ -397,7 +397,7 @@ Sổ **công bố**: tầng sau chỉ đọc phần đã công bố của tầng
 | `table_name` | varchar | không | Bảng, ví dụ `nessie.silver.fact_ping_result` |
 | `ictrl_dt`, `measurement_id` | date, integer | không | Partition |
 | `status` | varchar | không | Kết quả **lần chạy gần nhất**: `published`, `published_with_warnings`, `blocked`, `blocked_upstream` |
-| `row_count` | bigint | có | Số dòng của **bản công bố gần nhất** |
+| `row_count` | bigint | có | Số dòng của **bản công bố gần nhất**, đúng partition (bảng, ngày, measurement); mart ghép cặp IPv4/IPv6 tính mỗi cặp cho cả hai measurement |
 | `snapshot_id` | bigint | có | Snapshot Iceberg của **bản công bố gần nhất**; lần chạy bị chặn không xoá giá trị này. `NULL` = chưa từng công bố |
 | `pipeline_run_id`, `dq_run_id` | varchar | không | Lần chạy và lần kiểm tra chất lượng gần nhất |
 | `reason` | varchar | có | Lý do chặn, hoặc ghi chú (vd Gold dựng từ bản Silver cũ) |

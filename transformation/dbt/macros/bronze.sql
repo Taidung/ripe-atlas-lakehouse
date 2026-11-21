@@ -82,7 +82,7 @@ SELECT
     '{{ var("run_id") }}'                                                  AS bronze_run_id,
     {{ run_ts() }}                                                         AS bronze_loaded_at,
     reason,
-    row_number() OVER (PARTITION BY {{ uid(['entity_id', 'run_id']) }}, reason IS NULL
+    row_number() OVER (PARTITION BY entity_id, run_id, reason IS NULL  -- = record_uid
                        ORDER BY source_object, "_dlt_id")                  AS dedup_rank,
     -- cột chung cho bronze.quarantine
     {{ uid(["'" ~ entity ~ "'", 'manifest_path', 'raw_sha256', 'reason', '"_dlt_id"']) }} AS quarantine_uid,

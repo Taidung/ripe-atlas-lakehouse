@@ -89,3 +89,10 @@ def published_snapshot(db: Trino, table: str, day: date) -> int | None:
     if len(snapshots) > 1:
         raise RuntimeError(f"{table} {day}: nhiều snapshot công bố khác nhau {snapshots}; chạy lại job tạo ra bảng này")
     return next(iter(snapshots), None)
+
+
+def push_partition_days(m, layer: str, results: dict[str, str], statuses: tuple[str, ...]) -> None:
+    """Metric: số ngày theo trạng thái công bố của lần chạy (results: ngày -> trạng thái)."""
+    for status in statuses:
+        n = sum(1 for r in results.values() if r == status)
+        m.set("ripe_partition_days", "Số ngày theo trạng thái công bố, lần chạy gần nhất", n, layer=layer, status=status)

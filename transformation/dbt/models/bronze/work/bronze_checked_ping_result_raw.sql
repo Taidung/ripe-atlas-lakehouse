@@ -49,7 +49,7 @@ SELECT
     p_prb_id                                                               AS probe_id,
     CAST(p_af AS integer)                                                  AS af,
     p_timestamp                                                            AS event_ts,
-    {{ to_ts6("from_unixtime(p_timestamp, 'UTC')") }}                             AS event_time,
+    {{ to_ts6("from_unixtime(p_timestamp, 'UTC')") }}                       AS event_time,
     p_stored_ts                                                            AS stored_ts,
     ictrl_dt,
     {{ to_ts6("from_unixtime(window_start_ts, 'UTC')") }}                         AS window_start,
@@ -70,7 +70,7 @@ SELECT
     reason,
     -- Cùng nội dung được stage nhiều lần (hai run chồng nhau): chỉ bản stage sớm nhất được ghi (dedup_rank = 1).
     row_number() OVER (
-        PARTITION BY {{ uid(['p_msm_id', 'p_prb_id', 'p_timestamp', 'raw_sha256']) }}, reason IS NULL
+        PARTITION BY p_msm_id, p_prb_id, p_timestamp, raw_sha256, reason IS NULL   -- = record_uid
         ORDER BY from_iso8601_timestamp(fetched_at), run_id, source_object, line_no
     )                                                                      AS dedup_rank,
     -- cột chung cho bronze.quarantine
