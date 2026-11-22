@@ -28,7 +28,8 @@ METRICS = json.loads(METRICS_FILE.read_text(encoding="utf-8"))
 DB_NAME = "RIPE Atlas Lakehouse (Trino)"
 SCHEMA = "gold"
 SLUG = "global-network-quality"
-DEFAULT_COHORT = "strat-k2-c100-v1"
+# Cohort mặc định của filter = probe set pipeline đang thu, để dashboard mở ra là có dữ liệu.
+DEFAULT_COHORT = os.environ.get("PROBE_SET_VERSION", "dev-200-v1")
 TIME_COL = "event_hour_local"
 
 

@@ -46,7 +46,7 @@ Mọi chart đều nhận filter cohort.
 
 | Filter | Kiểu | Mặc định | Ghi chú |
 |---|---|---|---|
-| Probe set (cohort) | Chọn 1, bắt buộc | `strat-k2-c100-v1` | Bắt buộc chọn đúng một, vì probe thuộc hai set sẽ có mặt ở cả hai cohort |
+| Probe set (cohort) | Chọn 1, bắt buộc | `PROBE_SET_VERSION` trong `.env` (mặc định `dev-200-v1`), tức probe set pipeline đang thu; đổi biến này thì chạy lại `provision.py` | Bắt buộc chọn đúng một, vì probe thuộc hai set sẽ có mặt ở cả hai cohort |
 | Khoảng thời gian (giờ VN) | Time range | No filter | Theo `event_hour_local` |
 | Time grain | Time grain | (của chart: 1 giờ) | Tỷ lệ luôn tính lại từ tử và mẫu số nên đổi grain vẫn đúng |
 | Target, Address family, Measurement | Chọn nhiều | | Vì measurement xác định (target, af), lọc measurement và target/af mâu thuẫn nhau sẽ cho kết quả rỗng, không cho số sai |
