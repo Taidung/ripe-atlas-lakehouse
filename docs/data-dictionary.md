@@ -44,7 +44,7 @@ qua Trino ngày 2026-11-20: 20 bảng, 433 cột. Quy tắc chi tiết nằm ở
 | `ops.partition_status` | ops | trạng thái công bố của 1 bảng × ngày × measurement | `table_name` + `ictrl_dt` + `measurement_id` | — |
 | `ops.dq_result` | ops | 1 kết quả kiểm tra chất lượng | `dq_run_id` + `check_name` + bảng | `days(checked_at)` |
 | `ops.probe_set_member` | ops (seed) | 1 probe thuộc 1 probe set theo af | `probe_set_version` + `af` + `probe_id` | — |
-| `ops.asn_info` | ops (seed) | 1 ASN: `as_holder` (RIPEstat), `isp_name`, `isp_type` | `asn` | — |
+| `ops.asn_info` | ops (seed) | 1 ASN: `as_holder` (RIPEstat), `isp_name` (PeeringDB / viết tay cho VN), `isp_type` | `asn` | — |
 
 ---
 
@@ -322,7 +322,7 @@ Nhóm thêm theo `asn` (bigint, `-1` = chưa biết). Thêm:
 | `asn_country_count` | bigint | Số quốc gia có probe thuộc ASN này |
 | `asn_primary_country` | varchar | Mã quốc gia nhỏ nhất theo thứ tự chữ cái trong các quốc gia đó (để hiển thị) |
 | `isp_name` | varchar | Tên nhà mạng (seed `ops.asn_info`); `AS<n>` nếu ASN chưa có trong seed, `Chưa biết` nếu `asn = -1` |
-| `isp_type` | varchar | Loại mạng cho ASN Việt Nam: `ISP`, `Hosting/DC`, `Khác`; `NULL` với ASN nước khác |
+| `isp_type` | varchar | Loại mạng: `ISP`, `Hosting/DC`, `Giáo dục/Nghiên cứu`, `Doanh nghiệp`, `Khác`; ASN Việt Nam phân loại tay, ASN khác theo PeeringDB; `NULL` nếu chưa rõ |
 
 ### `gold.quality_hourly_probe`
 

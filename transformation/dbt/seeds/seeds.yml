@@ -12,8 +12,9 @@ seeds:
         probe_id: bigint
   - name: asn_info
     description: >
-      Tên nhà mạng theo ASN: as_holder (RIPEstat), isp_name (tên ngắn; viết tay cho ASN Việt Nam), isp_type (ISP,
-      Hosting/DC, Khác; chỉ ASN Việt Nam). Sinh bằng transformation/dbt/scripts/build_asn_info_seed.py.
+      Tên nhà mạng theo ASN: as_holder (tên đăng ký, RIPEstat), isp_name (tên gọn: viết tay cho ASN Việt Nam, còn lại
+      lấy từ PeeringDB hoặc as_holder bỏ handle), isp_type (ISP, Hosting/DC, Giáo dục/Nghiên cứu, Doanh nghiệp, Khác;
+      trống nếu chưa rõ). Sinh bằng transformation/dbt/scripts/build_asn_info_seed.py.
     config:
       column_types:
         asn: bigint

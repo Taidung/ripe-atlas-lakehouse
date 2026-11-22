@@ -115,8 +115,8 @@ Job ingestion chạy trong container `ingestion` (profile `jobs`). Phạm vi pro
 Viettel, VNPT, FPT, CMC, MobiFone và các nhà cung cấp hosting) cùng probe ở các châu lục khác. Cách chọn ghi trong
 trường `method` của file. Biến `PROBE_SET_VERSION` (mặc định `dev-200-v2`) hoặc `--probe-set` chọn version.
 
-Tên nhà mạng theo ASN nằm ở seed `transformation/dbt/seeds/asn_info.csv` (tên đăng ký từ RIPEstat; tên ngắn và loại
-ISP / Hosting/DC / Khác cho ASN Việt Nam). Đổi probe set, hoặc Gold hiện ASN chưa có tên, thì sinh lại seed (cần mạng):
+Tên nhà mạng theo ASN nằm ở seed `transformation/dbt/seeds/asn_info.csv` (tên gọn và loại mạng từ PeeringDB, không có thì
+tên đăng ký RIPEstat; ASN Việt Nam đặt tên và phân loại tay). Đổi probe set, hoặc Gold hiện ASN chưa có tên, thì sinh lại seed (cần mạng):
 
 ```bash
 python transformation/dbt/scripts/build_asn_info_seed.py

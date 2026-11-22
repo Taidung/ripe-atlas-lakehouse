@@ -463,7 +463,8 @@ def charts(ds: dict) -> list[dict]:
         ["asn", "isp_name", "isp_type", "asn_primary_country"],
         ["results", "packet_loss_pct", "rtt_mean_ms", "response_rate_observed_pct"],
         "results",
-        "ASN theo af của measurement (asn_v4 / asn_v6); -1 = chưa biết. Tên nhà mạng từ RIPEstat (seed asn_info).",
+        "ASN theo af của measurement (asn_v4 / asn_v6); -1 = chưa biết. "
+        "Tên và loại mạng: viết tay cho VN, còn lại từ PeeringDB/RIPEstat (seed asn_info).",
     )
     # Hàng 6b: nhà mạng Việt Nam
     vn = [("country_code", "==", "VN")]
@@ -636,7 +637,8 @@ LAYOUT = [  # (row of chart names, height)
 
 NOTES = """### Đọc dashboard đúng cách
 - **Probe set `dev-200-v2`:** 200 probe, gồm mọi probe Việt Nam đang hoạt động (42 probe, 20 ASN) và probe ở các châu lục khác.
-- **Nhà mạng** lấy theo ASN của probe (tên từ RIPEstat). Ở Việt Nam: ISP = nhà mạng truy cập (Viettel, VNPT, FPT, CMC, MobiFone),
+- **Nhà mạng** lấy theo ASN của probe (tên gọn từ PeeringDB, không có thì từ RIPEstat; VN viết tay).
+  Ở Việt Nam: ISP = nhà mạng truy cập (Viettel, VNPT, FPT, CMC, MobiFone),
   Hosting/DC = VPS/trung tâm dữ liệu. Nhiều nhà mạng chỉ có 1–2 probe: so sánh kèm số probe, đừng kết luận từ một probe.
 - Kết quả **chỉ phản ánh các probe và target được quan sát** (K-root, F-root qua built-in ping).
   Không suy ra băng thông hay chất lượng toàn bộ Internet.
