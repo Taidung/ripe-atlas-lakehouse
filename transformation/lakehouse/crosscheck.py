@@ -13,8 +13,10 @@ Nhóm chỉ có ở một phía, hoặc giá trị chỉ có ở một phía, đ
 from __future__ import annotations
 
 import json
+from datetime import date
 
 from lakehouse.common import CONFIG_DIR
+from lakehouse.publication import published_snapshot
 from lakehouse.trino_db import Trino
 
 TOLERANCE = 1e-9
@@ -77,6 +79,14 @@ def run(args, m) -> int:
     ensure_probe_set_seed(db)
     metrics = json.loads((CONFIG_DIR / "metrics.json").read_text(encoding="utf-8"))
     day = args.date
+    # Đọc Silver tại snapshot ĐÃ CÔNG BỐ (như Gold), không phải bản mới nhất: sau một lượt Silver bị chặn, bản mới nhất
+    # khác bản Gold dùng và crosscheck sẽ báo MISMATCH dù Gold đúng.
+    snaps = {t: published_snapshot(db, f"nessie.silver.{t}", date.fromisoformat(day)) for t in ("fact_ping_result", "fact_ping_reply")}
+    if None in snaps.values():
+        print(f"{day}: chưa có snapshot Silver công bố {snaps}; không có gì để đối chiếu")
+        return 1
+    fact = f"silver.fact_ping_result FOR VERSION AS OF {snaps['fact_ping_result']}"
+    reply = f"silver.fact_ping_reply FOR VERSION AS OF {snaps['fact_ping_reply']}"
     cohort = f"""
         JOIN ops.probe_set_member m ON m.af = f.af AND m.probe_id = f.probe_id
         JOIN (SELECT DISTINCT probe_set_version AS v, measurement_id, window_start AS event_hour_utc
@@ -94,7 +104,7 @@ def run(args, m) -> int:
                    100 * CAST(sum(CASE WHEN f.packets_sent > 0 AND f.packets_received > 0 THEN 1 ELSE 0 END) AS double)
                        / sum(CASE WHEN f.packets_sent > 0 THEN 1 ELSE 0 END) AS resp,
                    sum(f.rtt_sum_ms) / sum(f.valid_rtt_count) AS rtt_mean, count(*) AS n
-            FROM silver.fact_ping_result f {cohort}
+            FROM {fact} f {cohort}
             WHERE f.ictrl_dt = DATE '{day}' AND f.public_status = 'public' AND NOT f.clock_suspect
             GROUP BY 1, 2""")
     }
@@ -121,8 +131,8 @@ def run(args, m) -> int:
         for r in db.dicts(
             weighted_percentiles(f"""
             SELECT m.probe_set_version AS cohort, f.measurement_id, r.rtt_ms AS v, count(*) AS w
-            FROM silver.fact_ping_reply r
-            JOIN silver.fact_ping_result f ON f.result_id = r.result_id AND f.ictrl_dt = r.ictrl_dt
+            FROM {reply} r
+            JOIN {fact} f ON f.result_id = r.result_id AND f.ictrl_dt = r.ictrl_dt
             {cohort}
             WHERE r.ictrl_dt = DATE '{day}' AND r.is_valid_rtt AND f.public_status = 'public' AND NOT f.clock_suspect
             GROUP BY 1, 2, 3""")

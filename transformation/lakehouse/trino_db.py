@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from lakehouse.common import split_sql, sql_str
+from lakehouse.common import log_event, split_sql, sql_str
 
 CATALOG = os.environ.get("LAKEHOUSE_CATALOG", "lakehouse")
 
@@ -94,4 +94,8 @@ def work_schema(db: Trino, run_id: str) -> Iterator[str]:
     try:
         yield name
     finally:
-        db.execute(f"DROP SCHEMA IF EXISTS {name} CASCADE")
+        # Không để lỗi DROP (mất kết nối, truy vấn đã bị hủy) che lỗi gốc của lượt chạy; schema sót lại được maintenance dọn.
+        try:
+            db.execute(f"DROP SCHEMA IF EXISTS {name} CASCADE")
+        except Exception as exc:  # noqa: BLE001
+            log_event("trino", "work_schema_drop_failed", schema=name, error=type(exc).__name__, message=str(exc)[:300])

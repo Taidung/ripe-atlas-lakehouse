@@ -237,7 +237,9 @@ docker compose exec airflow bash -c "grep -rh '\"run_id\": \"<run_id>\"' /opt/ai
 **Đổi probe set hoặc schema Gold:**
 - Từ 2026-11-22 chỉ còn probe set `dev-200-v2`; thành viên của `dev-200-v1` và `strat-k2-c100-v1` đã bị xoá khỏi seed
   `probe_set_member`. Bronze/Silver của hai set cũ (nếu máy còn) vẫn đọc được, nhưng **Gold không dựng lại được** cho
-  chúng: chạy `gold` cho các ngày đó cho cohort rỗng. Muốn bỏ hẳn dữ liệu cũ thì reset bằng `down -v` rồi nạp lại.
+  chúng. Ngày nào có manifest của probe set không còn trong seed thì `gold` **chặn cả ngày** (`blocked`, mã thoát 2,
+  `reason` ghi tên probe set) và giữ nguyên Gold đã công bố, thay vì ghi bảng nháp rỗng đè lên. Ngày trộn set cũ và
+  `dev-200-v2` (ví dụ 22/11 trên máy chưa reset) cũng bị chặn: muốn bỏ hẳn dữ liệu cũ thì reset bằng `down -v` rồi nạp lại.
 - Mart Gold có `on_schema_change: append_new_columns`: thêm cột mới (ví dụ `isp_name`, `isp_type`) được tự `ALTER TABLE
   ADD COLUMN` ở lần chạy `gold` kế tiếp. Các ngày chưa tính lại có `NULL` ở cột mới; tính lại bằng
   `docker compose --profile jobs run --rm transform gold --dates <ngày>`. Bỏ cột hoặc đổi kiểu cột thì vẫn phải xoá bảng

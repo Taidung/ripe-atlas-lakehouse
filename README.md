@@ -180,7 +180,7 @@ Mô hình, data dictionary và quy tắc chuẩn hóa: `docs/silver-model.md`.
 Integration test chặn công bố, chạy trên nhánh Nessie tạm, không làm bẩn `main`:
 
 ```bash
-bash tests/integration/dq_block_on_branch.sh 2026-11-20
+bash tests/integration/dq_block_on_branch.sh 2026-11-22   # ngày VN đã có Silver và Gold trên main
 ```
 
 ### Silver → Gold

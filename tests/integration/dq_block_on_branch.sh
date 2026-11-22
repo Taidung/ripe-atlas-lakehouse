@@ -12,7 +12,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export MSYS_NO_PATHCONV=1
-DAY="${1:-2026-11-20}"
+DAY="${1:?Cách dùng: dq_block_on_branch.sh <ngày VN đã có Silver và Gold trên main> [ngày trống]}"
 EMPTY_DAY="${2:-2026-11-01}"   # ngày không có dữ liệu Silver
 BRANCH=dqtest                   # cố định: catalog serving/trino/catalog/lakehouse_dqtest.properties trỏ vào nhánh này
 NESSIE=http://localhost:19120/api/v2

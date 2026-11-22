@@ -109,6 +109,9 @@ def build_day(db: Trino, ws: str, day: date, run_id: str, dq: DqRecorder) -> str
         status, reason = "published_with_warnings", "; ".join(failed_names(checks))[:900]
     else:
         status, reason = "published", None
+    # Bảng reply có trạng thái cho MỌI measurement có fact, kể cả 0 reply: Gold cần snapshot công bố của cả hai bảng,
+    # thiếu dòng reply thì ngày đó không bao giờ dựng được Gold.
+    reply_counts = {m: reply_counts.get(m, 0) for m in fact_counts}
     rows = [
         PartitionStatus("silver", table, day, m, status, n, run_id, dq.dq_run_id, snapshot, reason, now)
         for table, counts, snapshot in ((FACT, fact_counts, fact_snapshot), (REPLY, reply_counts, reply_snapshot))

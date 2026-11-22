@@ -49,15 +49,15 @@ MARTS = [
 
 def ensure_probe_set_seed(db: Trino) -> None:
     """Nạp seed probe_set_member và asn_info khi bảng chưa có hoặc khác file CSV, tránh nạp lại ở mỗi lần chạy theo
-    giờ. Probe set là bất biến nên so số dòng theo version là đủ; asn_info nhỏ nên so toàn bộ nội dung."""
+    giờ. So toàn bộ nội dung (multiset): đổi một probe mà tổng số dòng giữ nguyên vẫn bị phát hiện (~400 dòng)."""
     with (DBT_DIR / "seeds" / "probe_set_member.csv").open(encoding="utf-8") as f:
-        expected = Counter(row["probe_set_version"] for row in csv.DictReader(f))
+        expected = Counter((r["probe_set_version"], int(r["af"]), int(r["probe_id"])) for r in csv.DictReader(f))
     current = (
-        dict(db.query("SELECT probe_set_version, count(*) FROM ops.probe_set_member GROUP BY 1"))
+        Counter(tuple(r) for r in db.query("SELECT probe_set_version, af, probe_id FROM ops.probe_set_member"))
         if db.table_exists("ops.probe_set_member")
-        else {}
+        else Counter()
     )
-    if current != dict(expected):
+    if current != expected:
         run = dbt("seed", "probe_set_member", {})
         if not run.success:
             raise RuntimeError("dbt seed probe_set_member thất bại")
@@ -114,6 +114,21 @@ def build_day(db: Trino, ws: str, day: date, run_id: str, dq: DqRecorder) -> str
         mark_marts_blocked(db, day, sorted(silver_status) or [-1], "blocked_upstream", reason, run_id, dq.dq_run_id)
         log_event("gold", "day_skipped", ictrl_dt=str(day), reason=reason)
         return "blocked_upstream"
+
+    # Cohort đã ingest trong ngày nhưng không còn thành viên trong seed (probe set đã bỏ): bảng nháp của cohort đó rỗng,
+    # kiểm tra lưới giờ vẫn qua (0 = 0) và replace_day sẽ XÓA Gold đã công bố của cohort. Chặn cả ngày, giữ bản cũ.
+    unknown = [
+        v
+        for (v,) in db.query(f"""
+            SELECT DISTINCT probe_set_version FROM bronze.ingest_manifest
+            WHERE entity = 'ping_result_raw' AND ictrl_dt = DATE '{day}' AND bronze_status = 'loaded'
+              AND probe_set_version NOT IN (SELECT DISTINCT probe_set_version FROM ops.probe_set_member)""")
+    ]
+    if unknown:
+        reason = f"probe set không có trong seed probe_set_member: {sorted(unknown)}; giữ Gold đã công bố"
+        mark_marts_blocked(db, day, readable, "blocked", reason, run_id, dq.dq_run_id)
+        log_event("gold", "day_blocked", ictrl_dt=str(day), reason=reason)
+        return "blocked"
 
     pinned = {t: published_snapshot(db, t, day) for t in (SILVER_FACT, SILVER_REPLY)}
     log_event("gold", "silver_pinned", ictrl_dt=str(day), snapshots=pinned)

@@ -9,6 +9,10 @@ models:
       - staged_rows_match_manifest:
           arguments:
             entity: ping_result_raw
+          config:
+            # Test đọc thêm source runner.bronze_pending_object (không có tag): runner chọn test theo tag với
+            # --indirect-selection cautious, thiếu tag này test bị loại và object thiếu/cụt không bị phát hiện.
+            tags: ['bronze_ping_result_raw']
       - load_id_matches_manifest
       - quarantine_ratio_at_most:
           arguments:
@@ -20,6 +24,10 @@ models:
       - staged_rows_match_manifest:
           arguments:
             entity: probe_metadata_raw
+          config:
+            # Test đọc thêm source runner.bronze_pending_object (không có tag): runner chọn test theo tag với
+            # --indirect-selection cautious, thiếu tag này test bị loại và object thiếu/cụt không bị phát hiện.
+            tags: ['bronze_probe_metadata_raw']
       - load_id_matches_manifest
       - quarantine_ratio_at_most:
           arguments:
@@ -31,6 +39,10 @@ models:
       - staged_rows_match_manifest:
           arguments:
             entity: measurement_metadata_raw
+          config:
+            # Test đọc thêm source runner.bronze_pending_object (không có tag): runner chọn test theo tag với
+            # --indirect-selection cautious, thiếu tag này test bị loại và object thiếu/cụt không bị phát hiện.
+            tags: ['bronze_measurement_metadata_raw']
       - load_id_matches_manifest
       - quarantine_ratio_at_most:
           arguments:

@@ -154,3 +154,21 @@ def test_maintenance_drops_only_stale_work_schemas():
     old, fresh = work_schema_name("silver-20261119T094018Z-0ebace4c"), work_schema_name("gold-20261121T110000Z-1a2b3c4d")
     assert old == "work_silver_20261119t094018z_0ebace4c"
     assert stale_work_schemas([old, fresh, "work", "work_misc"], now) == [old]
+
+
+def test_work_schema_drop_failure_does_not_hide_original_error():
+    from lakehouse.trino_db import work_schema
+
+    class FailingDrop:
+        def __init__(self):
+            self.statements = []
+
+        def execute(self, sql):
+            self.statements.append(sql)
+            if sql.startswith("DROP"):
+                raise ConnectionError("trino gone")
+
+    db = FailingDrop()
+    with pytest.raises(ValueError, match="original"), work_schema(db, "gold-x"):
+        raise ValueError("original")
+    assert db.statements[-1].startswith("DROP SCHEMA IF EXISTS work_gold_x")

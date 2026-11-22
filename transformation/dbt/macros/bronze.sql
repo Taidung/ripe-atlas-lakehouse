@@ -16,7 +16,13 @@
     {%- set tuples = [] -%}
     {%- for r in rows -%}
         {%- set vals = [] -%}
-        {%- for v in r -%}{%- do vals.append("'" ~ v ~ "'") -%}{%- endfor -%}
+        {%- for v in r -%}
+            {#- Đường dẫn object thiếu một khóa partition: NULL sẽ thành chuỗi 'None', lọc ra 0 dòng mà không báo lỗi. -#}
+            {%- if v is none -%}
+                {{ exceptions.raise_compiler_error("Bronze " ~ entity ~ ": object đang chờ thiếu giá trị partition " ~ pending_cols ~ " = " ~ r) }}
+            {%- endif -%}
+            {%- do vals.append("'" ~ v ~ "'") -%}
+        {%- endfor -%}
         {%- do tuples.append('(' ~ vals | join(', ') ~ ')') -%}
     {%- endfor -%}
     ({{ partition_cols | join(', ') }}) IN ({{ tuples | join(', ') }})
