@@ -63,12 +63,18 @@ def ensure_probe_set_seed(db: Trino) -> None:
             raise RuntimeError("dbt seed probe_set_member thất bại")
     # Tên nhà mạng theo ASN (~200 dòng, có thể sửa tay): nạp lại khi nội dung bảng khác file CSV. `dbt seed` nạp ô trống
     # thành NULL nên mọi ô trống đổi sang None trước khi so, nếu không bảng không bao giờ "khớp" và seed bị nạp lại mỗi giờ.
+    # ASN trùng bị chặn ngay ở file, ở MỌI lần chạy: test dbt chỉ chạy khi nạp seed, mà bảng đã nạp bản trùng thì lần sau
+    # "khớp" file và bước nạp (cùng test) bị bỏ qua. So theo multiset (Counter) để bảng có dòng trùng cũng bị nạp lại.
     with (DBT_DIR / "seeds" / "asn_info.csv").open(encoding="utf-8") as f:
-        wanted = {(int(r["asn"]), *(r[c] or None for c in ("as_holder", "isp_name", "isp_type"))) for r in csv.DictReader(f)}
+        rows = [(int(r["asn"]), *(r[c] or None for c in ("as_holder", "isp_name", "isp_type"))) for r in csv.DictReader(f)]
+    dup = sorted(a for a, n in Counter(r[0] for r in rows).items() if n > 1)
+    if dup:
+        raise RuntimeError(f"asn_info.csv có ASN trùng: {dup}; sửa file rồi chạy lại")
+    wanted = Counter(rows)
     loaded = (
-        {tuple(r) for r in db.query("SELECT asn, as_holder, isp_name, isp_type FROM ops.asn_info")}
+        Counter(tuple(r) for r in db.query("SELECT asn, as_holder, isp_name, isp_type FROM ops.asn_info"))
         if db.table_exists("ops.asn_info")
-        else set()
+        else Counter()
     )
     if loaded != wanted:
         # build = seed + test (asn duy nhất, không NULL): ASN trùng sẽ nhân đôi fact khi join trong gold_cohort.
