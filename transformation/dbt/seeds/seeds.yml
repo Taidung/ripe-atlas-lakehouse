@@ -20,3 +20,7 @@ seeds:
         as_holder: varchar
         isp_name: varchar
         isp_type: varchar
+    columns:
+      - name: asn
+        description: Khoá nối với fact trong gold_cohort; trùng sẽ nhân đôi số liệu Gold.
+        data_tests: [unique, not_null]

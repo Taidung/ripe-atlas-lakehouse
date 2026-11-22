@@ -61,18 +61,22 @@ def ensure_probe_set_seed(db: Trino) -> None:
         run = dbt("seed", "probe_set_member", {})
         if not run.success:
             raise RuntimeError("dbt seed probe_set_member thất bại")
-    # Tên nhà mạng theo ASN (~200 dòng, có thể sửa tay): nạp lại khi nội dung bảng khác file CSV.
+    # Tên nhà mạng theo ASN (~200 dòng, có thể sửa tay): nạp lại khi nội dung bảng khác file CSV. `dbt seed` nạp ô trống
+    # thành NULL nên mọi ô trống đổi sang None trước khi so, nếu không bảng không bao giờ "khớp" và seed bị nạp lại mỗi giờ.
     with (DBT_DIR / "seeds" / "asn_info.csv").open(encoding="utf-8") as f:
-        wanted = {(int(r["asn"]), r["as_holder"], r["isp_name"], r["isp_type"] or None) for r in csv.DictReader(f)}
+        wanted = {(int(r["asn"]), *(r[c] or None for c in ("as_holder", "isp_name", "isp_type"))) for r in csv.DictReader(f)}
     loaded = (
         {tuple(r) for r in db.query("SELECT asn, as_holder, isp_name, isp_type FROM ops.asn_info")}
         if db.table_exists("ops.asn_info")
         else set()
     )
     if loaded != wanted:
-        run = dbt("seed", "asn_info", {})
+        # build = seed + test (asn duy nhất, không NULL): ASN trùng sẽ nhân đôi fact khi join trong gold_cohort.
+        run = dbt("build", "asn_info", {})
         if not run.success:
-            raise RuntimeError("dbt seed asn_info thất bại")
+            raise RuntimeError(
+                f"dbt build asn_info thất bại (seed hoặc test): {[n.name for n in run.nodes if n.status in ('error', 'fail')]}"
+            )
 
 
 def mart_counts(db: Trino, ws: str, mart: str) -> dict[int, int]:

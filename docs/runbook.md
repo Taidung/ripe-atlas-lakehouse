@@ -234,6 +234,17 @@ docker compose exec airflow bash -c "grep -rh '\"run_id\": \"<run_id>\"' /opt/ai
   docker volume rm ripe-atlas-lakehouse_prometheus_data
   ```
 
+**Đổi probe set hoặc schema Gold:**
+- Từ 2026-11-22 chỉ còn probe set `dev-200-v2`; thành viên của `dev-200-v1` và `strat-k2-c100-v1` đã bị xoá khỏi seed
+  `probe_set_member`. Bronze/Silver của hai set cũ (nếu máy còn) vẫn đọc được, nhưng **Gold không dựng lại được** cho
+  chúng: chạy `gold` cho các ngày đó cho cohort rỗng. Muốn bỏ hẳn dữ liệu cũ thì reset bằng `down -v` rồi nạp lại.
+- Mart Gold có `on_schema_change: append_new_columns`: thêm cột mới (ví dụ `isp_name`, `isp_type`) được tự `ALTER TABLE
+  ADD COLUMN` ở lần chạy `gold` kế tiếp. Các ngày chưa tính lại có `NULL` ở cột mới; tính lại bằng
+  `docker compose --profile jobs run --rm transform gold --dates <ngày>`. Bỏ cột hoặc đổi kiểu cột thì vẫn phải xoá bảng
+  Gold (`DROP TABLE lakehouse.gold.<mart>` bằng user `transform`) rồi chạy lại `gold` cho mọi ngày.
+- Seed `asn_info` (tên nhà mạng) được nạp lại bằng `dbt build` khi nội dung khác file CSV; test `unique`/`not_null` của
+  `asn` chạy kèm, ASN trùng làm job `gold` thất bại thay vì nhân đôi số liệu.
+
 ## Quyền truy cập
 
 | Thành phần | Quyền |
