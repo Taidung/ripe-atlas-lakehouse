@@ -22,7 +22,7 @@ Các lệnh dưới đây chạy từ thư mục gốc repo. Trên Git Bash (Win
 | `ripe_atlas_daily_metadata` | `20 0 * * *` | Snapshot metadata → Bronze → `silver --repair-unknown` → Gold cho hôm qua và hôm nay (giờ VN) |
 | `ripe_atlas_reconcile` | `30 2 * * *` | Tải lại cả ngày hôm qua (dữ liệu trễ quá 3 giờ) |
 | `ripe_atlas_maintenance` | `30 3 * * *` | Compaction ngày đã đóng; xóa object mồ côi > 48 giờ; xóa log task > 14 ngày |
-| `ripe_atlas_backfill` | thủ công | `airflow dags trigger ripe_atlas_backfill -c '{"start":"…Z","end":"…Z","probe_set":"strat-k2-c100-v1"}'` |
+| `ripe_atlas_backfill` | thủ công | `airflow dags trigger ripe_atlas_backfill -c '{"start":"…Z","end":"…Z","probe_set":"dev-200-v2"}'` |
 
 **Lưu ý khi vận hành DAG:**
 - DAG mới **mặc định bị tạm dừng**. Bật bằng lệnh `docker compose exec airflow airflow dags unpause <dag_id>`.

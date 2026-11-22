@@ -48,8 +48,8 @@ MARTS = [
 
 
 def ensure_probe_set_seed(db: Trino) -> None:
-    """Nạp seed probe_set_member khi bảng chưa có hoặc khác file CSV (probe set mới). Probe set là bất biến nên
-    so số dòng theo version là đủ; tránh nạp lại 7 nghìn dòng ở mỗi lần chạy theo giờ."""
+    """Nạp seed probe_set_member và asn_info khi bảng chưa có hoặc khác file CSV, tránh nạp lại ở mỗi lần chạy theo
+    giờ. Probe set là bất biến nên so số dòng theo version là đủ; asn_info nhỏ nên so toàn bộ nội dung."""
     with (DBT_DIR / "seeds" / "probe_set_member.csv").open(encoding="utf-8") as f:
         expected = Counter(row["probe_set_version"] for row in csv.DictReader(f))
     current = (
@@ -61,6 +61,18 @@ def ensure_probe_set_seed(db: Trino) -> None:
         run = dbt("seed", "probe_set_member", {})
         if not run.success:
             raise RuntimeError("dbt seed probe_set_member thất bại")
+    # Tên nhà mạng theo ASN (~200 dòng, có thể sửa tay): nạp lại khi nội dung bảng khác file CSV.
+    with (DBT_DIR / "seeds" / "asn_info.csv").open(encoding="utf-8") as f:
+        wanted = {(int(r["asn"]), r["as_holder"], r["isp_name"], r["isp_type"] or None) for r in csv.DictReader(f)}
+    loaded = (
+        {tuple(r) for r in db.query("SELECT asn, as_holder, isp_name, isp_type FROM ops.asn_info")}
+        if db.table_exists("ops.asn_info")
+        else set()
+    )
+    if loaded != wanted:
+        run = dbt("seed", "asn_info", {})
+        if not run.success:
+            raise RuntimeError("dbt seed asn_info thất bại")
 
 
 def mart_counts(db: Trino, ws: str, mart: str) -> dict[int, int]:

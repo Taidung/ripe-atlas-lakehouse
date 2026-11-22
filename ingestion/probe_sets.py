@@ -1,14 +1,13 @@
 """Tập probe có phiên bản (probe_set_version) để kết quả tái lập được.
 
-- dev-200-v1: 200 probe cố định của repo (chọn tay theo châu lục), dùng cho cả IPv4 và IPv6.
-- strat-*: mẫu phân tầng theo (country_code, ASN theo af), xem docs/adr/0001-probe-sampling.md.
+- dev-200-v2: 200 probe cố định của repo (dev-200-v1 + mọi probe Việt Nam đang hoạt động), dùng cho cả IPv4 và IPv6.
+  Cách chọn ghi trong trường `method` của file JSON.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,69 +58,3 @@ def load_probe_set(version: str, directory: Path = PROBE_SET_DIR) -> ProbeSet:
 def chunked(ids: Iterable[int], size: int) -> list[list[int]]:
     ids = list(ids)
     return [ids[i : i + size] for i in range(0, len(ids), size)]
-
-
-def _hash_rank(seed: str, probe_id: int) -> str:
-    return hashlib.sha256(f"{seed}:{probe_id}".encode()).hexdigest()
-
-
-def stratified_select(
-    population: list[dict[str, Any]],
-    asn_field: str,
-    k: int,
-    country_cap: int | None,
-    seed: str,
-    prefer: set[int] | None = None,
-) -> list[dict[str, Any]]:
-    """Chọn tối đa k probe mỗi tầng (country, asn), rồi tối đa country_cap probe mỗi quốc gia.
-
-    Thứ tự trong tầng: probe thuộc `prefer` trước (ví dụ dual-stack), sau đó theo sha256(seed:id),
-    nên kết quả deterministic. Khi cắt theo trần quốc gia, lấy lần lượt hạng 1 của mọi tầng rồi
-    mới tới hạng 2, để giữ được nhiều ASN nhất.
-
-    Trọng số: w = N_tầng / n_tầng, rồi co giãn trong mỗi quốc gia để tổng trọng số = N_quốc_gia
-    (bù cho các tầng bị trần quốc gia loại hẳn). Trả về danh sách dict có probe_id, country_code,
-    asn, stratum_size, rank_in_stratum, weight.
-    """
-    if k < 1:
-        raise ValueError("k must be >= 1")
-    prefer = prefer or set()
-    strata: dict[tuple[str, Any], list[dict[str, Any]]] = defaultdict(list)
-    for probe in population:
-        country = probe.get("country_code") or "ZZ"
-        strata[(country, probe.get(asn_field))].append(probe)
-
-    candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for (country, asn), members in strata.items():
-        members.sort(key=lambda p: (p["id"] not in prefer, _hash_rank(seed, p["id"])))
-        for rank, probe in enumerate(members[:k]):
-            candidates[country].append(
-                {
-                    "probe_id": probe["id"],
-                    "country_code": country,
-                    "asn": asn,
-                    "stratum_size": len(members),
-                    "rank_in_stratum": rank,
-                    "_order": (rank, probe["id"] not in prefer, _hash_rank(seed, probe["id"])),
-                }
-            )
-
-    country_population = defaultdict(int)
-    for (country, _), members in strata.items():
-        country_population[country] += len(members)
-
-    selected: list[dict[str, Any]] = []
-    for country, items in candidates.items():
-        items.sort(key=lambda item: item["_order"])
-        kept = items if country_cap is None else items[:country_cap]
-        per_stratum = defaultdict(int)
-        for item in kept:
-            per_stratum[item["asn"]] += 1
-        raw = {item["probe_id"]: item["stratum_size"] / per_stratum[item["asn"]] for item in kept}
-        scale = country_population[country] / sum(raw.values())
-        for item in kept:
-            item.pop("_order")
-            item["weight"] = round(raw[item["probe_id"]] * scale, 6)
-            selected.append(item)
-    selected.sort(key=lambda item: item["probe_id"])
-    return selected

@@ -132,7 +132,7 @@ services:
       S3_INGEST_SECRET_KEY: ${S3_INGEST_SECRET_KEY:?Set S3_INGEST_SECRET_KEY in .env}
       STAGING_S3_ENDPOINT: http://s3:8333
       STAGING_BUCKET: staging
-      PROBE_SET_VERSION: ${PROBE_SET_VERSION:-dev-200-v1}
+      PROBE_SET_VERSION: ${PROBE_SET_VERSION:-dev-200-v2}
       OVERLAP_HOURS: ${OVERLAP_HOURS:-3}
       ATLAS_CONCURRENCY: ${ATLAS_CONCURRENCY:-2}
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-http://pushgateway:9091}
@@ -241,7 +241,7 @@ services:
       SUPERSET_DB_PASSWORD: ${SUPERSET_DB_PASSWORD:?Set SUPERSET_DB_PASSWORD in .env}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?Set SUPERSET_ADMIN_PASSWORD in .env}
       # Cohort mặc định của dashboard = probe set mà pipeline đang thu (cùng biến với ingestion/Airflow).
-      PROBE_SET_VERSION: ${PROBE_SET_VERSION:-dev-200-v1}
+      PROBE_SET_VERSION: ${PROBE_SET_VERSION:-dev-200-v2}
     volumes: &superset_volumes
       - ./serving/superset/superset_config.py:/app/docker/superset_config.py:ro
       - ./serving/superset/superset-init.sh:/app/docker/superset-init.sh:ro
@@ -347,7 +347,7 @@ services:
       S3_PROCESSING_SECRET_KEY: ${S3_PROCESSING_SECRET_KEY}
       STAGING_S3_ENDPOINT: http://s3:8333
       STAGING_BUCKET: staging
-      PROBE_SET_VERSION: ${PROBE_SET_VERSION:-dev-200-v1}
+      PROBE_SET_VERSION: ${PROBE_SET_VERSION:-dev-200-v2}
       OVERLAP_HOURS: ${OVERLAP_HOURS:-3}
       ATLAS_CONCURRENCY: ${ATLAS_CONCURRENCY:-2}
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-http://pushgateway:9091}

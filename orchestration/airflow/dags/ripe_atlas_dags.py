@@ -174,7 +174,7 @@ with DAG(
     params={
         "start": Param("2026-11-19T00:00:00Z", type="string", description="ISO-8601 UTC, tròn giờ"),
         "end": Param("2026-11-19T03:00:00Z", type="string", description="ISO-8601 UTC, tròn giờ (exclusive)"),
-        "probe_set": Param("strat-k2-c100-v1", type="string"),
+        "probe_set": Param("dev-200-v2", type="string"),
     },
 ) as backfill:
     b_rng = ["--start", "{{ params.start }}", "--end", "{{ params.end }}"]

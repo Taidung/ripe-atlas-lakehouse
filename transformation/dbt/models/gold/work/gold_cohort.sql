@@ -1,6 +1,7 @@
 {{ config(materialized='table', schema='work', tags=['gold_build']) }}
 {#- Mọi result Silver ĐÃ CÔNG BỐ của ngày thuộc cohort (trước khi lọc public/clock), kèm giờ địa phương và mã unknown
-    cho country/asn. is_eligible = probe public và đồng hồ không đáng ngờ. -#}
+    cho country/asn, tên nhà mạng theo ASN (seed asn_info; ASN chưa có tên hiện 'AS<n>'). is_eligible = probe public và
+    đồng hồ không đáng ngờ. -#}
 WITH facts AS (
     SELECT * FROM {{ published('fact_ping_result', 'fact_snapshot') }} WHERE {{ readable_filter() }}
 ),
@@ -16,9 +17,13 @@ SELECT
     m.probe_set_version,
     coalesce(f.country_code, 'ZZ')                               AS country_code,
     coalesce(f.asn, -1)                                          AS asn,
+    CASE WHEN f.asn IS NULL THEN 'Chưa biết'
+         ELSE coalesce(i.isp_name, 'AS' || CAST(f.asn AS varchar)) END AS isp_name,
+    i.isp_type,
     f.public_status = 'public' AND NOT f.clock_suspect          AS is_eligible
 FROM facts f
 JOIN members m ON m.af = f.af AND m.probe_id = f.probe_id
+LEFT JOIN {{ ref('asn_info') }} i ON i.asn = f.asn
 WHERE EXISTS (
     SELECT 1 FROM {{ ref('gold_ingested_hours') }} h
     WHERE h.probe_set_version = m.probe_set_version AND h.measurement_id = f.measurement_id AND h.event_hour_utc = f.event_hour_utc

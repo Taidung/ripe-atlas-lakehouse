@@ -101,7 +101,7 @@ class StagingSettings:
 
 @dataclass(frozen=True)
 class IngestSettings:
-    probe_set_version: str = "dev-200-v1"
+    probe_set_version: str = "dev-200-v2"
     probe_chunk_size: int = 500
     overlap_hours: int = 3
 

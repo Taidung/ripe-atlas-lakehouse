@@ -110,11 +110,17 @@ chắn nhầm lẫn chứ không phải bảo mật.
 
 ## 4. Ingestion → staging → Bronze
 
-Job ingestion chạy trong container `ingestion` (profile `jobs`). Phạm vi probe chọn bằng biến `PROBE_SET_VERSION`:
-- `dev-200-v1` (mặc định): 200 probe cố định.
-- `strat-k2-c100-v1`: mẫu phân tầng 4.324 probe IPv4 và 2.897 probe IPv6 (ADR-0001).
+Job ingestion chạy trong container `ingestion` (profile `jobs`). Phạm vi probe là probe set `dev-200-v2`
+(`config/probe_sets/dev-200-v2.json`): 200 probe cố định, gồm **mọi probe Việt Nam đang hoạt động** (42 probe, 20 ASN:
+Viettel, VNPT, FPT, CMC, MobiFone và các nhà cung cấp hosting) cùng probe ở các châu lục khác. Cách chọn ghi trong
+trường `method` của file. Biến `PROBE_SET_VERSION` (mặc định `dev-200-v2`) hoặc `--probe-set` chọn version.
 
-Có thể đặt biến này trong `.env`, hoặc truyền `--probe-set` cho từng lệnh.
+Tên nhà mạng theo ASN nằm ở seed `transformation/dbt/seeds/asn_info.csv` (tên đăng ký từ RIPEstat; tên ngắn và loại
+ISP / Hosting/DC / Khác cho ASN Việt Nam). Đổi probe set, hoặc Gold hiện ASN chưa có tên, thì sinh lại seed (cần mạng):
+
+```bash
+python transformation/dbt/scripts/build_asn_info_seed.py
+```
 
 ```bash
 docker compose --profile jobs build ingestion
@@ -130,9 +136,6 @@ docker compose --profile jobs run --rm ingestion incremental
 
 # Backfill: cùng logic, run_type=backfill được ghi vào manifest
 docker compose --profile jobs run --rm ingestion backfill --start 2026-11-18T00:00:00Z --end 2026-11-19T00:00:00Z
-
-# Sinh probe set mới (bất biến; không ghi đè version đã có)
-docker compose --profile jobs run --rm ingestion build-probe-set --version strat-k2-c100-v2 --k 2 --cap 100 --reference-end 2026-11-20T00:00:00Z
 ```
 
 Chạy lại cùng cửa sổ là an toàn. Record trùng nội dung (cùng SHA-256) không bị stage lại; chỉ record mới hoặc bị nguồn sửa mới được ghi.
@@ -199,7 +202,7 @@ docker compose --profile analytics up -d
 # Tạo hoặc cập nhật dataset, chart, dashboard từ code; chạy thử truy vấn của mọi chart; xuất ZIP vào serving/superset/export/
 docker compose exec -T superset /app/.venv/bin/python /app/project/provision.py
 # Kiểm tra tổ hợp filter, rollup giờ → ngày, timezone qua chính API của Superset, trên một ngày (giờ VN) đã có Gold
-docker compose exec -T -w /app/project superset /app/.venv/bin/python verify_filters.py --day 2026-11-21 --cohort dev-200-v1
+docker compose exec -T -w /app/project superset /app/.venv/bin/python verify_filters.py --day 2026-11-22 --cohort dev-200-v2
 ```
 
 Mở http://localhost:8088/superset/dashboard/global-network-quality/.
@@ -259,14 +262,13 @@ Airflow chạy image `ripe-atlas-ingestion:0.2` và `ripe-atlas-transform:0.1`; 
 ```bash
 docker compose --profile orchestration up -d
 docker compose exec airflow airflow dags unpause ripe_atlas_hourly      # DAG mặc định bị tạm dừng
-docker compose exec airflow airflow dags trigger ripe_atlas_backfill -c '{"start":"2026-11-19T00:00:00Z","end":"2026-11-19T03:00:00Z","probe_set":"strat-k2-c100-v1"}'
+docker compose exec airflow airflow dags trigger ripe_atlas_backfill -c '{"start":"2026-11-22T00:00:00Z","end":"2026-11-22T03:00:00Z","probe_set":"dev-200-v2"}'
 ```
 
 - Mở http://localhost:8090. User `admin`; mật khẩu tự sinh trong `/opt/airflow/logs/.auth/simple_auth_manager_passwords.json`:
   ```bash
   docker compose exec airflow cat /opt/airflow/logs/.auth/simple_auth_manager_passwords.json
   ```
-- Muốn lịch chạy theo giờ dùng mẫu phân tầng: đặt `PROBE_SET_VERSION=strat-k2-c100-v1` trong `.env`, rồi tạo lại container Airflow.
 - Danh sách DAG, pool và cách xử lý sự cố: `docs/runbook.md`. Lý do chọn Airflow: `docs/adr/0002-orchestration.md`.
 
 ## 7. Giám sát (Prometheus, Pushgateway, Grafana)

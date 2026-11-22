@@ -17,7 +17,7 @@ SELECT target, af,
        sum(rtt_sum_ms) / nullif(sum(rtt_count), 0)                            AS rtt_mean_ms,
        100 * CAST(sum(results_with_response) AS double) / nullif(sum(results_measured), 0) AS response_rate_observed_pct
 FROM nessie.gold.quality_hourly_target
-WHERE probe_set_version = 'strat-k2-c100-v1' AND ictrl_dt = DATE '2026-11-19'
+WHERE probe_set_version = 'dev-200-v2' AND ictrl_dt = DATE '2026-11-22'
 GROUP BY 1, 2 ORDER BY 1, 2;
 ```
 
@@ -27,7 +27,7 @@ p95 RTT theo packet theo quốc gia, tính từ histogram (gộp được ở m�
 SELECT country_code, sum(reply_count) AS replies,
        approx_percentile(bucket_rep_ms, reply_count, 0.95) AS rtt_p95_ms
 FROM nessie.gold.rtt_histogram_hourly
-WHERE probe_set_version = 'strat-k2-c100-v1' AND af = 4
+WHERE probe_set_version = 'dev-200-v2' AND af = 4
 GROUP BY 1 HAVING sum(reply_count) >= 500 ORDER BY rtt_p95_ms DESC LIMIT 20;
 ```
 
@@ -41,7 +41,7 @@ SELECT target, sum(pairs) AS pairs,
        sum(v6_rtt_sum_ms) / nullif(sum(v6_rtt_count), 0) AS v6_rtt_ms,
        sum(unpaired_v4_results) AS unpaired_v4, sum(unpaired_v6_results) AS unpaired_v6
 FROM nessie.gold.ipv4_ipv6_paired_hourly
-WHERE probe_set_version = 'strat-k2-c100-v1'
+WHERE probe_set_version = 'dev-200-v2'
 GROUP BY 1;
 ```
 
@@ -51,8 +51,19 @@ GROUP BY 1;
 SELECT event_hour_local, measurement_id, data_state, expected_probes, probes_observed,
        results_total_raw, expected_results, silver_status
 FROM nessie.gold.coverage_hourly
-WHERE probe_set_version = 'strat-k2-c100-v1' AND ictrl_dt = DATE '2026-11-19'
+WHERE probe_set_version = 'dev-200-v2' AND ictrl_dt = DATE '2026-11-22'
 ORDER BY 1, 2;
+```
+
+Chất lượng theo nhà mạng Việt Nam (gộp các ASN của cùng nhà mạng; luôn xem kèm số probe):
+
+```sql
+SELECT isp_name, isp_type, count(DISTINCT probe_id) AS probes, sum(results_total) AS results,
+       100 * CAST(sum(packets_lost) AS double) / nullif(sum(packets_sent), 0) AS packet_loss_pct,
+       sum(rtt_sum_ms) / nullif(sum(rtt_count), 0)                            AS rtt_mean_ms
+FROM nessie.gold.quality_hourly_probe
+WHERE probe_set_version = 'dev-200-v2' AND country_code = 'VN'
+GROUP BY 1, 2 ORDER BY isp_type, probes DESC;
 ```
 
 ## Drill-down xuống Silver
@@ -64,7 +75,7 @@ SELECT f.event_time, f.measurement_id, f.result_status, f.packets_sent, f.packet
        r.reply_seq, r.reply_type, r.rtt_ms, r.error_message
 FROM nessie.silver.fact_ping_result f
 JOIN nessie.silver.fact_ping_reply r ON r.result_id = f.result_id AND r.ictrl_dt = f.ictrl_dt
-WHERE f.ictrl_dt = DATE '2026-11-19' AND f.probe_id = 3108 AND f.result_status = 'all_lost'
+WHERE f.ictrl_dt = DATE '2026-11-22' AND f.probe_id = 3108 AND f.result_status = 'all_lost'
 ORDER BY f.event_time, r.reply_seq;
 ```
 
@@ -82,7 +93,7 @@ Truy ngược một result Silver về payload gốc và object staging:
 SELECT f.result_id, b.raw_json, b.source_object, b.manifest_path, b.ingest_run_id, b.fetched_at
 FROM nessie.silver.fact_ping_result f
 JOIN nessie.bronze.ping_result_raw b ON b.record_uid = f.record_uid AND b.ictrl_dt = f.ictrl_dt
-WHERE f.ictrl_dt = DATE '2026-11-19' AND f.probe_id = 3108 LIMIT 5;
+WHERE f.ictrl_dt = DATE '2026-11-22' AND f.probe_id = 3108 LIMIT 5;
 ```
 
 Kiểm tra chất lượng thất bại gần đây:

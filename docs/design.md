@@ -69,8 +69,9 @@ flowchart LR
 **Khối lượng toàn bộ public probes** [Đo 5 phút, ngoại suy]: ≈ 16 triệu result/ngày; staging ≈ 1,2 GB/ngày; toàn hệ ước tính ≈ 3 GB/ngày.
 Với 13 GB trống trên C:, chế độ toàn cầu chỉ giữ được **≈ 3–4 ngày** dữ liệu, sau khi đã trừ image còn thiếu (≈ 8–10 GB). Vì vậy:
 
-- **Chế độ `dev`:** 200 probe cố định của repo (`probe_set_version = dev-200-v1`), ≈ ≤ 12k result/giờ.
-- **Chế độ `analysis`:** đã chọn **mẫu phân tầng** (country × ASN × af).
+- **Probe set duy nhất `dev-200-v2`** (từ 2026-11-22): 200 probe cố định, gồm mọi probe Việt Nam đang hoạt động (42 probe,
+  20 ASN), ≈ ≤ 12k result/giờ. Tên nhà mạng theo ASN ở seed `asn_info`.
+- ~~Chế độ `analysis`: mẫu phân tầng (country × ASN × af)~~: đã bỏ ngày 2026-11-22 (ADR-0001 bị thay thế).
   - Thuật toán và số liệu ở `docs/adr/0001-probe-sampling.md`.
   - Đề xuất k = 2, trần 100 probe/quốc gia ≈ 4.290 probe v4 và 2.869 probe v6, ước tính ≈ 1 GB/ngày.
   - Docker data sẽ được chủ đồ án chuyển sang D:.

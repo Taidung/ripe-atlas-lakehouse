@@ -29,7 +29,7 @@ DB_NAME = "RIPE Atlas Lakehouse (Trino)"
 SCHEMA = "gold"
 SLUG = "global-network-quality"
 # Cohort mặc định của filter = probe set pipeline đang thu, để dashboard mở ra là có dữ liệu.
-DEFAULT_COHORT = os.environ.get("PROBE_SET_VERSION", "dev-200-v1")
+DEFAULT_COHORT = os.environ.get("PROBE_SET_VERSION", "dev-200-v2")
 TIME_COL = "event_hour_local"
 
 
@@ -460,10 +460,51 @@ def charts(ds: dict) -> list[dict]:
     table(
         "Chất lượng theo ASN",
         A,
-        ["asn", "asn_primary_country"],
+        ["asn", "isp_name", "isp_type", "asn_primary_country"],
         ["results", "packet_loss_pct", "rtt_mean_ms", "response_rate_observed_pct"],
         "results",
-        "ASN theo af của measurement (asn_v4 / asn_v6); -1 = chưa biết.",
+        "ASN theo af của measurement (asn_v4 / asn_v6); -1 = chưa biết. Tên nhà mạng từ RIPEstat (seed asn_info).",
+    )
+    # Hàng 6b: nhà mạng Việt Nam
+    vn = [("country_code", "==", "VN")]
+    table(
+        "Nhà mạng Việt Nam",
+        P,
+        ["isp_name", "isp_type"],
+        ["probes_observed", "results", "packet_loss_pct", "rtt_mean_ms", "response_rate_observed_pct", "results_all_lost"],
+        "results",
+        "Probe đặt tại VN, gộp theo nhà mạng (nhiều ASN của cùng nhà mạng được cộng lại). "
+        "ISP = nhà mạng truy cập; Hosting/DC = VPS, trung tâm dữ liệu: không đại diện cho người dùng gia đình.",
+        filters=vn,
+    )
+    form_isp = {
+        "viz_type": "echarts_timeseries_bar",
+        "x_axis": "isp_name",
+        "metrics": ["rtt_mean_ms"],
+        "groupby": ["isp_type"],
+        "adhoc_filters": [adhoc(*f) for f in vn],
+        "time_range": "No filter",
+        "row_limit": 100,
+        "show_legend": True,
+        "y_axis_format": ".1f",
+        "show_value": True,
+        "x_axis_sort_asc": True,
+    }
+    out.append(
+        (
+            "RTT trung bình theo nhà mạng Việt Nam",
+            P,
+            form_isp,
+            query_context(
+                P,
+                form_isp,
+                [axis("isp_name", None), "isp_type"],
+                ["rtt_mean_ms"],
+                row_limit=100,
+                filters=[{"col": f[0], "op": f[1], "val": f[2]} for f in vn],
+            ),
+            "RTT theo packet tới K-root/F-root từ probe đặt tại VN; màu theo loại mạng. Xem số probe ở bảng bên cạnh.",
+        )
     )
     # Hàng 7: IPv4 / IPv6
     form_bar = {
@@ -531,7 +572,7 @@ def charts(ds: dict) -> list[dict]:
     table(
         "Drill-down theo probe",
         P,
-        ["probe_id", "country_code", "asn", "measurement_id"],
+        ["probe_id", "country_code", "asn", "isp_name", "measurement_id"],
         ["results", "packet_loss_pct", "rtt_mean_ms", "results_all_lost"],
         "packet_loss_pct",
         "Sắp theo packet loss giảm dần; lọc probe/quốc gia/ASN bằng filter của dashboard.",
@@ -587,13 +628,16 @@ LAYOUT = [  # (row of chart names, height)
     (["p95 RTT theo target và address family", "Tỷ lệ result có phản hồi theo target và af"], 50),
     (["Heatmap packet loss: quốc gia × giờ"], 90),
     (["Quốc gia / ASN suy giảm (so cùng probe)", "Chất lượng theo ASN"], 60),
+    (["Nhà mạng Việt Nam", "RTT trung bình theo nhà mạng Việt Nam"], 60),
     (["RTT IPv4 vs IPv6 trên cặp cùng probe", "So sánh IPv4/IPv6 theo cặp (paired cohort)"], 50),
     (["Độ đầy đủ ước tính theo measurement", "Tình trạng xử lý theo giờ"], 60),
     (["Drill-down theo probe"], 70),
 ]
 
 NOTES = """### Đọc dashboard đúng cách
-- **Chọn đúng một probe set (cohort).** `strat-k2-c100-v1` là mẫu phân tầng theo quốc gia × ASN; `dev-200-v1` là 200 probe phát triển.
+- **Probe set `dev-200-v2`:** 200 probe, gồm mọi probe Việt Nam đang hoạt động (42 probe, 20 ASN) và probe ở các châu lục khác.
+- **Nhà mạng** lấy theo ASN của probe (tên từ RIPEstat). Ở Việt Nam: ISP = nhà mạng truy cập (Viettel, VNPT, FPT, CMC, MobiFone),
+  Hosting/DC = VPS/trung tâm dữ liệu. Nhiều nhà mạng chỉ có 1–2 probe: so sánh kèm số probe, đừng kết luận từ một probe.
 - Kết quả **chỉ phản ánh các probe và target được quan sát** (K-root, F-root qua built-in ping).
   Không suy ra băng thông hay chất lượng toàn bộ Internet.
 - Nhận định cấp quốc gia/toàn cầu phải xem kèm **số probe, số result và độ phủ**. Phân bố probe RIPE Atlas lệch mạnh về châu Âu/Bắc Mỹ.
@@ -731,6 +775,7 @@ def native_filters(ds: dict, chart_ds: dict[int, str]) -> list[dict]:
         select("NATIVE_FILTER-af", "Address family", "af", "quality_hourly_probe"),
         select("NATIVE_FILTER-msm", "Measurement", "measurement_id", "quality_hourly_probe"),
         select("NATIVE_FILTER-country", "Quốc gia (probe)", "country_code", "quality_hourly_probe"),
+        select("NATIVE_FILTER-isp", "Nhà mạng", "isp_name", "quality_hourly_probe"),
         select("NATIVE_FILTER-asn", "ASN", "asn", "quality_hourly_probe"),
         select("NATIVE_FILTER-probe", "Probe", "probe_id", "quality_hourly_probe"),
     ]

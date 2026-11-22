@@ -26,7 +26,7 @@ Một result của Silver chỉ được tính vào Gold khi thỏa **tất cả
 - `coverage_hourly` luôn đủ 24 giờ × 4 measurement cho mỗi cohort có mặt; probe set không có probe IPv6 vẫn có dòng
   cho 2001/2004 với `expected_probes = 0`. Khi `expected_results = 0`, độ đầy đủ không xác định: metric
   `ripe_gold_latest_hour_completeness_ratio` không được đẩy cho nhóm đó (thay vì 0), nên không sinh cảnh báo thiếu dữ liệu giả.
-- Vì vậy dashboard **bắt buộc chọn đúng một** `probe_set_version`. Filter dạng single-select, mặc định `strat-k2-c100-v1`.
+- Vì vậy dashboard **bắt buộc chọn đúng một** `probe_set_version`. Filter dạng single-select, mặc định `PROBE_SET_VERSION` (`dev-200-v2`).
 
 **Thời gian:**
 - `event_hour_utc` = giờ UTC của event.

@@ -39,7 +39,7 @@ jobs:
         run: |
           docker compose --profile analytics --profile monitoring --profile jobs build
           docker compose --profile analytics --profile monitoring up -d --wait
-      - name: Pipeline 1 giờ (dev-200-v1) -> Bronze -> Silver -> Gold (dbt trên Trino)
+      - name: Pipeline 1 giờ (dev-200-v2) -> Bronze -> Silver -> Gold (dbt trên Trino)
         run: |
           END=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:00:00Z); START=$(date -u -d '2 hours ago' +%Y-%m-%dT%H:00:00Z)
           T="docker compose --profile jobs run --rm -T transform"

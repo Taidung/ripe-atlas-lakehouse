@@ -1,6 +1,8 @@
 # ADR-0001: Lấy mẫu probe phân tầng cho chế độ `analysis`
 
-- Trạng thái: **Đã chấp nhận (2026-11-19)**, chủ đồ án duyệt **k = 2, C = 100**. Phiên bản đầu tiên của tập mẫu sẽ mang tên `strat-k2-c100-v1`.
+- Trạng thái: **Đã thay thế (2026-11-22)**. Đã chấp nhận ngày 2026-11-19 (k = 2, C = 100, tập `strat-k2-c100-v1`). Ngày 2026-11-22 chủ đồ án
+  quyết định chỉ dùng một probe set 200 probe có trọng tâm Việt Nam (`dev-200-v2`, xem `config/probe_sets/dev-200-v2.json`);
+  tập phân tầng, lệnh `build-probe-set` và `ingestion/probe_sampling.py` đã bị xoá. Nội dung dưới đây giữ lại làm lịch sử.
 - Bối cảnh: toàn bộ public probes ≈ 16 triệu result/ngày, toàn hệ ước tính ≈ 3 GB/ngày (`docs/api-survey.md`). Máy dev giới hạn RAM và đĩa.
 
 ## Quyết định

@@ -4,7 +4,6 @@
   python -m ingestion results --start 2026-11-18T06:00:00Z --end 2026-11-18T08:00:00Z
   python -m ingestion incremental                 # giờ vừa kết thúc + OVERLAP_HOURS giờ trước
   python -m ingestion backfill --start ... --end ...
-  python -m ingestion build-probe-set --version strat-k2-c100-v1 --k 2 --cap 100 --reference-end 2026-11-19T00:00:00Z
 
 Mã thoát khác 0 nếu bất kỳ job (measurement, cửa sổ) nào thất bại; các job thành công vẫn giữ
 manifest, nên chạy lại chỉ làm lại phần thiếu (và phần chồng lấn).
@@ -20,7 +19,7 @@ import time
 from collections import Counter
 from datetime import datetime, timezone
 
-from ingestion import metrics, probe_sampling
+from ingestion import metrics
 from ingestion.jobs import IngestContext, new_run_id, run_measurement_metadata, run_probe_metadata, run_results_window
 from ingestion.logs import log_event
 from ingestion.probe_sets import load_probe_set
@@ -106,19 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     cln.add_argument("--orphan-min-age-hours", type=int, default=48)
     cln.add_argument("--apply", action="store_true", help="Xóa thật; mặc định chỉ liệt kê")
 
-    bps = sub.add_parser("build-probe-set", help="Sinh tập probe phân tầng (ADR-0001)")
-    bps.add_argument("--version", required=True)
-    bps.add_argument("--k", type=int, default=2)
-    bps.add_argument("--cap", type=int, default=100)
-    bps.add_argument("--seed", default="ripe-atlas-lakehouse")
-    bps.add_argument("--reference-end", required=True, type=parse_instant)
-    bps.add_argument("--reference-minutes", type=int, default=15)
-
     args = parser.parse_args(argv)
-
-    if args.command == "build-probe-set":
-        probe_sampling.main(args.version, args.k, args.cap, args.seed, args.reference_end, args.reference_minutes)
-        return 0
 
     if args.command == "cleanup":
         from ingestion.staging_cleanup import run_cleanup

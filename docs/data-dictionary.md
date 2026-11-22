@@ -43,6 +43,8 @@ qua Trino ngày 2026-11-20: 20 bảng, 433 cột. Quy tắc chi tiết nằm ở
 | `gold.coverage_hourly` | Gold | giờ × cohort × measurement (đủ 24 giờ, kể cả giờ trống) | | `ictrl_dt` |
 | `ops.partition_status` | ops | trạng thái công bố của 1 bảng × ngày × measurement | `table_name` + `ictrl_dt` + `measurement_id` | — |
 | `ops.dq_result` | ops | 1 kết quả kiểm tra chất lượng | `dq_run_id` + `check_name` + bảng | `days(checked_at)` |
+| `ops.probe_set_member` | ops (seed) | 1 probe thuộc 1 probe set theo af | `probe_set_version` + `af` + `probe_id` | — |
+| `ops.asn_info` | ops (seed) | 1 ASN: `as_holder` (RIPEstat), `isp_name`, `isp_type` | `asn` | — |
 
 ---
 
@@ -278,7 +280,7 @@ ingest giờ đó. Gold **chỉ lưu tử số và mẫu số cộng được**;
 | `ictrl_dt` | date | Ngày giờ VN (partition) |
 | `event_hour_utc` | timestamptz | Giờ, UTC |
 | `event_hour_local` | timestamp | Cùng giờ đó theo giờ VN, không múi giờ (cho Superset và Trino hiển thị) |
-| `probe_set_version` | varchar | Cohort: `dev-200-v1` hoặc `strat-k2-c100-v1`. Dashboard **phải chọn đúng một** |
+| `probe_set_version` | varchar | Cohort (probe set): hiện chỉ có `dev-200-v2`. Dashboard **phải chọn đúng một** |
 | `measurement_id`, `af`, `target` | integer, integer, varchar | Measurement |
 | `gold_run_id`, `gold_built_at` | varchar, timestamptz | Lần chạy Gold |
 
@@ -319,6 +321,8 @@ Nhóm thêm theo `asn` (bigint, `-1` = chưa biết). Thêm:
 |---|---|---|
 | `asn_country_count` | bigint | Số quốc gia có probe thuộc ASN này |
 | `asn_primary_country` | varchar | Mã quốc gia nhỏ nhất theo thứ tự chữ cái trong các quốc gia đó (để hiển thị) |
+| `isp_name` | varchar | Tên nhà mạng (seed `ops.asn_info`); `AS<n>` nếu ASN chưa có trong seed, `Chưa biết` nếu `asn = -1` |
+| `isp_type` | varchar | Loại mạng cho ASN Việt Nam: `ISP`, `Hosting/DC`, `Khác`; `NULL` với ASN nước khác |
 
 ### `gold.quality_hourly_probe`
 
@@ -328,6 +332,7 @@ Nhóm thêm theo `probe_id`. Thêm:
 |---|---|---|
 | `probe_sk` | bigint | Phiên bản `dim_probe` (lớn nhất trong giờ) |
 | `country_code`, `asn` | varchar, bigint | Quốc gia, ASN của probe trong giờ |
+| `isp_name`, `isp_type` | varchar, varchar | Nhà mạng theo ASN, như `gold.quality_hourly_asn` |
 
 ### `gold.rtt_histogram_hourly`
 

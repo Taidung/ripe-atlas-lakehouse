@@ -29,7 +29,7 @@ MANIFEST = {
     "window_start": "2026-11-21T00:00:00+00:00",
     "window_end": "2026-11-21T01:00:00+00:00",
     "ictrl_dt": "2026-11-21",
-    "probe_set_version": "dev-200-v1",
+    "probe_set_version": "dev-200-v2",
     "probes_requested": 200,
     "requests": [{}, {}],
     "counts": {"fetched": 3000, "new": 2919, "changed": 0, "unchanged": 81, "staged": 2919},

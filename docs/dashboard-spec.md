@@ -34,10 +34,12 @@ Mọi chart đều nhận filter cohort.
 | 12–15 | Time series loss / RTT TB / p95 / tỷ lệ phản hồi theo target × af | Diễn biến theo thời gian | probe / histogram, `x = event_hour_local`, group by `target, af` | %, ms | | Giờ không có dữ liệu: điểm bị ngắt, không nội suy |
 | 16 | Heatmap loss quốc gia × giờ | Phát hiện bất thường theo vùng và thời gian | country | % | ASN, probe | **Ô trống = không có result** (khác với 100% = mất toàn bộ packet) |
 | 17 | Quốc gia/ASN suy giảm | Nhóm xấu đi so với baseline | `v_degraded_groups`; ẩn `insufficient_sample` | Điểm %, ms | thời gian (có cửa sổ riêng), quốc gia, ASN, probe | Không có dòng = không có nhóm đủ mẫu |
-| 18 | Chất lượng theo ASN | Xếp hạng ASN kèm cỡ mẫu | asn | | quốc gia, probe | `-1` = chưa biết ASN |
-| 19–20 | IPv4 vs IPv6 trên cặp | So sánh công bằng: cùng probe, cùng target, \|Δt\| ≤ 120 s | paired: `pairs`, loss, RTT, delta, số result không có cặp | ms, % | af, measurement, ASN (bảng dùng `asn_v4`/`asn_v6`) | Không có cặp → `pairs = 0`, tỷ lệ `NULL` |
-| 21–22 | Độ đầy đủ theo measurement; tình trạng xử lý theo giờ | Phân biệt `measured`, `processed_no_results` và `not_processed`; loại trừ; quarantine | coverage | % | quốc gia, ASN, probe | Giờ chưa xử lý vẫn hiện, với trạng thái `not_processed` |
-| 23 | Drill-down theo probe | Tìm probe kéo chỉ số xấu đi | probe, group by `probe_id, country_code, asn, measurement_id` | | | |
+| 18 | Chất lượng theo ASN | Xếp hạng ASN kèm cỡ mẫu | asn, `isp_name`, `isp_type` | | quốc gia, probe | `-1` = chưa biết ASN |
+| 19 | Nhà mạng Việt Nam | So sánh nhà mạng VN kèm số probe | probe, `country_code = VN`, group by `isp_name, isp_type` | %, ms | nhà mạng, ASN, probe | Gộp các ASN của cùng nhà mạng; ISP khác Hosting/DC |
+| 20 | RTT trung bình theo nhà mạng Việt Nam | RTT mỗi nhà mạng VN | bar, x = `isp_name`, màu = `isp_type` | ms | nhà mạng, ASN, probe | Xem kèm số probe ở chart 19 |
+| 21–22 | IPv4 vs IPv6 trên cặp | So sánh công bằng: cùng probe, cùng target, \|Δt\| ≤ 120 s | paired: `pairs`, loss, RTT, delta, số result không có cặp | ms, % | af, measurement, ASN (bảng dùng `asn_v4`/`asn_v6`) | Không có cặp → `pairs = 0`, tỷ lệ `NULL` |
+| 23–24 | Độ đầy đủ theo measurement; tình trạng xử lý theo giờ | Phân biệt `measured`, `processed_no_results` và `not_processed`; loại trừ; quarantine | coverage | % | quốc gia, ASN, probe | Giờ chưa xử lý vẫn hiện, với trạng thái `not_processed` |
+| 25 | Drill-down theo probe | Tìm probe kéo chỉ số xấu đi | probe, group by `probe_id, country_code, asn, isp_name, measurement_id` | | | |
 | — | Ghi chú "Đọc dashboard đúng cách" | Giới hạn diễn giải | Markdown | | | |
 
 **Phạm vi filter** được `provision.py` tính tự động: một filter chỉ áp vào chart có dataset chứa cột tương ứng. Vì vậy không có chart nào "âm thầm" bỏ qua filter mà người xem tưởng đang được áp dụng.
@@ -46,11 +48,11 @@ Mọi chart đều nhận filter cohort.
 
 | Filter | Kiểu | Mặc định | Ghi chú |
 |---|---|---|---|
-| Probe set (cohort) | Chọn 1, bắt buộc | `PROBE_SET_VERSION` trong `.env` (mặc định `dev-200-v1`), tức probe set pipeline đang thu; đổi biến này thì chạy lại `provision.py` | Bắt buộc chọn đúng một, vì probe thuộc hai set sẽ có mặt ở cả hai cohort |
+| Probe set (cohort) | Chọn 1, bắt buộc | `PROBE_SET_VERSION` trong `.env` (mặc định `dev-200-v2`), tức probe set pipeline đang thu; đổi biến này thì chạy lại `provision.py` | Bắt buộc chọn đúng một, vì probe thuộc hai set sẽ có mặt ở cả hai cohort |
 | Khoảng thời gian (giờ VN) | Time range | No filter | Theo `event_hour_local` |
 | Time grain | Time grain | (của chart: 1 giờ) | Tỷ lệ luôn tính lại từ tử và mẫu số nên đổi grain vẫn đúng |
 | Target, Address family, Measurement | Chọn nhiều | | Vì measurement xác định (target, af), lọc measurement và target/af mâu thuẫn nhau sẽ cho kết quả rỗng, không cho số sai |
-| Quốc gia, ASN, Probe | Chọn nhiều | | |
+| Quốc gia, Nhà mạng, ASN, Probe | Chọn nhiều | | Nhà mạng = `isp_name` (tên theo ASN, seed `asn_info`) |
 
 ## Kiểm thử đã chạy (2026-11-19, dữ liệu 260.442 result ngày 19/11 giờ VN)
 

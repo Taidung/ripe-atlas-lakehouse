@@ -1,6 +1,6 @@
 """Kiểm tra tổ hợp filter / rollup / timezone qua chính API truy vấn của Superset (POST /api/v1/chart/data).
 
-  docker compose exec -T -w /app/project superset /app/.venv/bin/python verify_filters.py --day 2026-11-21 [--cohort dev-200-v1]
+  docker compose exec -T -w /app/project superset /app/.venv/bin/python verify_filters.py --day 2026-11-21 [--cohort dev-200-v2]
 
 `--day` là một ngày (giờ VN) đã có Gold; mọi kiểm tra chỉ xét ngày đó, vì phép rollup "ngày = tổng các giờ" cần
 đúng một ngày. Không có dữ liệu cho (cohort, ngày) thì dừng với mã 2 thay vì so None với None.
@@ -54,7 +54,7 @@ def close(a, b, tol=1e-9) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--day", type=date.fromisoformat, required=True, help="ngày theo giờ VN, ví dụ 2026-11-21")
-    parser.add_argument("--cohort", default="dev-200-v1", help="probe_set_version (mặc định dev-200-v1)")
+    parser.add_argument("--cohort", default="dev-200-v2", help="probe_set_version (mặc định dev-200-v2)")
     args = parser.parse_args()
     day_range = f"{args.day}T00:00:00 : {args.day + timedelta(days=1)}T00:00:00"
     api = Api()
