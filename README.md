@@ -198,8 +198,8 @@ docker compose --profile jobs run --rm transform crosscheck --date 2026-11-19
 docker compose --profile analytics up -d
 # Tạo hoặc cập nhật dataset, chart, dashboard từ code; chạy thử truy vấn của mọi chart; xuất ZIP vào serving/superset/export/
 docker compose exec -T superset /app/.venv/bin/python /app/project/provision.py
-# Kiểm tra tổ hợp filter, rollup giờ → ngày, timezone qua chính API của Superset
-docker compose exec -T -w /app/project superset /app/.venv/bin/python verify_filters.py
+# Kiểm tra tổ hợp filter, rollup giờ → ngày, timezone qua chính API của Superset, trên một ngày (giờ VN) đã có Gold
+docker compose exec -T -w /app/project superset /app/.venv/bin/python verify_filters.py --day 2026-11-21 --cohort dev-200-v1
 ```
 
 Mở http://localhost:8088/superset/dashboard/global-network-quality/.

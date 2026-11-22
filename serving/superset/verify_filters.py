@@ -1,17 +1,20 @@
 """Kiểm tra tổ hợp filter / rollup / timezone qua chính API truy vấn của Superset (POST /api/v1/chart/data).
 
-  docker compose exec -T superset /app/.venv/bin/python /app/project/verify_filters.py
+  docker compose exec -T -w /app/project superset /app/.venv/bin/python verify_filters.py --day 2026-11-21 [--cohort dev-200-v1]
+
+`--day` là một ngày (giờ VN) đã có Gold; mọi kiểm tra chỉ xét ngày đó, vì phép rollup "ngày = tổng các giờ" cần
+đúng một ngày. Không có dữ liệu cho (cohort, ngày) thì dừng với mã 2 thay vì so None với None.
 
 Mỗi kiểm tra so hai đường tính độc lập (hai mart khác nhau, hoặc hai time grain) cho cùng một câu hỏi.
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
+from datetime import date, datetime, timedelta, timezone  # Superset chạy Python 3.10: chưa có datetime.UTC
 
 from provision import Api, axis
-
-COHORT = "strat-k2-c100-v1"
 
 
 def ds_id(api: Api, name: str) -> int:
@@ -49,13 +52,25 @@ def close(a, b, tol=1e-9) -> bool:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--day", type=date.fromisoformat, required=True, help="ngày theo giờ VN, ví dụ 2026-11-21")
+    parser.add_argument("--cohort", default="dev-200-v1", help="probe_set_version (mặc định dev-200-v1)")
+    args = parser.parse_args()
+    day_range = f"{args.day}T00:00:00 : {args.day + timedelta(days=1)}T00:00:00"
     api = Api()
     P, T, C, CV, H = (
         ds_id(api, n)
         for n in ("quality_hourly_probe", "quality_hourly_target", "quality_hourly_country", "coverage_hourly", "rtt_histogram_hourly")
     )
-    cohort = {"col": "probe_set_version", "op": "IN", "val": [COHORT]}
+    cohort = {"col": "probe_set_version", "op": "IN", "val": [args.cohort]}
     metrics = ["results", "packet_loss_pct", "rtt_mean_ms", "response_rate_observed_pct"]
+
+    def run_day(ds, metrics, **kw):
+        return run(api, ds, metrics, time_range=day_range, **kw)
+
+    if not run_day(P, ["results"], filters=[cohort])[0]["results"]:
+        print(f"Không có dữ liệu Gold cho cohort={args.cohort} ngày {args.day} (giờ VN); chọn --day/--cohort khác.")
+        return 2
     checks = []
 
     def check(name, a, b):
@@ -72,21 +87,21 @@ def main() -> int:
         [{"col": "af", "op": "IN", "val": [6]}],
         [{"col": "target", "op": "IN", "val": ["f.root-servers.net"]}, {"col": "af", "op": "IN", "val": [4]}],
     ):
-        a = run(api, P, metrics, filters=[cohort, *flt])[0]
-        b = run(api, T, metrics, filters=[cohort, *flt])[0]
+        a = run_day(P, metrics, filters=[cohort, *flt])[0]
+        b = run_day(T, metrics, filters=[cohort, *flt])[0]
         check(f"filter {[(f['col'], f['val']) for f in flt]} probe vs target mart", a, b)
 
     # 2. Lọc quốc gia: mart probe == mart country
     for cc in ("VN", "US", "ZZ"):
         f = [cohort, {"col": "country_code", "op": "IN", "val": [cc]}]
-        check(f"country={cc} probe vs country mart", run(api, P, metrics, filters=f)[0], run(api, C, metrics, filters=f)[0])
+        check(f"country={cc} probe vs country mart", run_day(P, metrics, filters=f)[0], run_day(C, metrics, filters=f)[0])
 
     # 3. Rollup: tổng theo grain ngày == tổng theo grain giờ (tính lại từ tử/mẫu số), cho từng af
     for af in (4, 6):
         f = [cohort, {"col": "af", "op": "IN", "val": [af]}]
-        day = run(api, P, metrics, columns=[axis("event_hour_local", "P1D")], filters=f, grain="P1D")
-        hours = run(api, P, ["results", "packet_loss_pct"], columns=[axis("event_hour_local", "PT1H")], filters=f, grain="PT1H")
-        total = run(api, P, metrics, filters=f)[0]
+        day = run_day(P, metrics, columns=[axis("event_hour_local", "P1D")], filters=f, grain="P1D")
+        hours = run_day(P, ["results", "packet_loss_pct"], columns=[axis("event_hour_local", "PT1H")], filters=f, grain="PT1H")
+        total = run_day(P, metrics, filters=f)[0]
         ok = (
             len(day) == 1
             and close(day[0]["packet_loss_pct"], total["packet_loss_pct"])
@@ -94,33 +109,37 @@ def main() -> int:
         )
         naive = sum(h["packet_loss_pct"] for h in hours if h["packet_loss_pct"] is not None) / max(1, len(hours))
         checks.append(ok)
+        if not day:
+            print(f"FAIL rollup af={af}: không có dòng theo ngày")
+            continue
         print(
             f"{'PASS' if ok else 'FAIL'} rollup af={af}: day loss={day[0]['packet_loss_pct']:.4f} = total {total['packet_loss_pct']:.4f}; "
             f"{len(hours)} giờ, TB tỷ lệ theo giờ (cách SAI) = {naive:.4f}"
         )
 
-    # 4. Timezone: khoảng giờ VN 09:00-10:00 == giờ UTC 02:00 trong coverage (results_eligible)
-    vn = run(api, P, ["results"], filters=[cohort], time_range="2026-11-19T09:00:00 : 2026-11-19T10:00:00")[0]["results"]
-    cov_09 = run(
+    # 4. Timezone: một giờ VN (giờ sớm nhất có dữ liệu trong ngày) lọc trên mart probe == coverage (results_eligible)
+    hour_rows = run_day(P, ["results"], columns=[axis("event_hour_local", "PT1H")], filters=[cohort], grain="PT1H")
+    first = datetime.fromtimestamp(min(r["event_hour_local"] for r in hour_rows) / 1000, timezone.utc).replace(tzinfo=None)  # noqa: UP017
+    hour_range = f"{first:%Y-%m-%dT%H:%M:%S} : {first + timedelta(hours=1):%Y-%m-%dT%H:%M:%S}"
+    vn = run(api, P, ["results"], filters=[cohort], time_range=hour_range)[0]["results"]
+    cov = run(
         api,
         CV,
         [{"expressionType": "SQL", "sqlExpression": "SUM(results_eligible)", "label": "eligible"}],
         filters=[cohort],
-        time_range="2026-11-19T09:00:00 : 2026-11-19T10:00:00",
+        time_range=hour_range,
     )[0]["eligible"]
-    ok = vn == cov_09 and vn > 0
+    ok = vn == cov and vn > 0
     checks.append(ok)
-    print(f"{'PASS' if ok else 'FAIL'} timezone: results giờ VN 09:00 (probe mart) = {vn}, coverage eligible cùng giờ = {cov_09}")
+    print(f"{'PASS' if ok else 'FAIL'} timezone: results giờ VN {first:%H:00} (probe mart) = {vn}, coverage eligible cùng giờ = {cov}")
 
     # 5. p95 với filter quốc gia + af đi qua mart histogram
-    p95 = run(
-        api,
+    p95 = run_day(
         H,
         ["rtt_p95_ms", "rtt_samples"],
         filters=[cohort, {"col": "country_code", "op": "IN", "val": ["VN"]}, {"col": "af", "op": "IN", "val": [4]}],
     )[0]
-    rtt_n = run(
-        api,
+    rtt_n = run_day(
         P,
         [{"expressionType": "SQL", "sqlExpression": "SUM(rtt_count)", "label": "n"}],
         filters=[cohort, {"col": "country_code", "op": "IN", "val": ["VN"]}, {"col": "af", "op": "IN", "val": [4]}],
