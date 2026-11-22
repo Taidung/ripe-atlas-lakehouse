@@ -49,127 +49,53 @@ services:
     networks:
       - lakehouse
 
-  master:
+  # SeaweedFS chạy một tiến trình `weed server`: master + volume + filer + S3 gateway.
+  # Alias mạng `s3` giữ nguyên endpoint http://s3:8333 cho Trino, ingestion, Airflow, Prometheus.
+  seaweedfs:
     logging: *default-logging
     image: chrislusf/seaweedfs@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 # SeaweedFS 4.53
     restart: unless-stopped
     ports:
-      - "9333:9333"
+      - "8333:8333" # S3 API
+      - "8888:8888" # filer UI
+      - "9333:9333" # master UI
     command:
-      - master
-      - -ip=master
+      - server
+      - -ip=seaweedfs
       - -ip.bind=0.0.0.0
-      - -port=9333
-      - -mdir=/data
-      - -volumeSizeLimitMB=1024
-      - -defaultReplication=000
-    volumes:
-      - master_data:/data
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9333/cluster/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    networks:
-      - lakehouse
-
-  volume:
-    logging: *default-logging
-    image: chrislusf/seaweedfs@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 # SeaweedFS 4.53
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    command: 
-      - volume
-      - -master=master:9333
-      - -ip=volume
-      - -ip.bind=0.0.0.0
-      - -port=8080
       - -dataCenter=dc1
       - -rack=rack1
+      - -master.port=9333
+      - -master.dir=/data
+      - -master.volumeSizeLimitMB=1024
+      - -master.defaultReplication=000
+      - -volume.port=8080
       - -dir=/data
-      - -max=0
-      - -index=leveldb
-    volumes:
-      - volume_data:/data
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    depends_on:
-      master:
-        condition: service_healthy
-    networks:
-      - lakehouse
-  
-  filer:
-    logging: *default-logging
-    image: chrislusf/seaweedfs@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 # SeaweedFS 4.53
-    restart: unless-stopped
-    ports:
-      - "8888:8888"
-    command:
-      - filer
-      - -master=master:9333
-      - -ip=filer
-      - -ip.bind=0.0.0.0
-      - -port=8888
-      - -dataCenter=dc1
-      - -rack=rack1
-      - -defaultStoreDir=/data
-    volumes:
-      - filer_data:/data
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8888/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    depends_on:
-      master:
-        condition: service_healthy
-      volume:
-        condition: service_healthy
-    networks:
-      - lakehouse
-  
-  s3:
-    logging: *default-logging
-    image: chrislusf/seaweedfs@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0 # SeaweedFS 4.53
-    restart: unless-stopped
-    ports:
-      - "8333:8333"
-    command:
-      - s3
-      - -filer=filer:8888
-      - -ip=s3
-      - -ip.bind=0.0.0.0
-      - -port=8333
-      - -port.iceberg=0
+      - -volume.max=0
+      - -volume.index=leveldb
+      - -filer
+      - -filer.port=8888
+      - -s3
+      - -s3.port=8333
+      - -s3.port.iceberg=0
+      - -s3.port.lance=0
+      - -s3.config=/etc/seaweedfs/s3.json
       - -metricsPort=9327
-      - -port.lance=0
-      - -config=/etc/seaweedfs/s3.json
     env_file: .env
     volumes:
+      # Một volume cho cả 3 phần: /data/m9333 (master), /data/filerldb2 (filer, theo filer.toml có sẵn trong image),
+      # các file *.dat/*.idx (volume). /data có sẵn trong image và thuộc user seaweed nên volume mới ghi được.
+      - volume_data:/data
       - ./storage/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8333/status"]
       interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 20s
-    depends_on:
-      master:
-        condition: service_healthy
-      volume:
-        condition: service_healthy
-      filer:
-        condition: service_healthy
+      retries: 6
+      start_period: 30s
     networks:
-      - lakehouse
+      lakehouse:
+        aliases: [s3]
 
   init-buckets:
     logging: *default-logging
@@ -186,7 +112,7 @@ services:
             aws --endpoint-url http://s3:8333 s3api create-bucket --bucket "$$bucket"
         done
     depends_on:
-      s3:
+      seaweedfs:
         condition: service_healthy
     networks:
       - lakehouse
@@ -216,7 +142,7 @@ services:
       - ./ingestion:/opt/app/ingestion:ro
       - ./tests:/opt/app/tests:ro
     depends_on:
-      s3:
+      seaweedfs:
         condition: service_healthy
     networks:
       - lakehouse
@@ -275,7 +201,7 @@ services:
     depends_on:
       nessie:
         condition: service_healthy
-      s3:
+      seaweedfs:
         condition: service_healthy
       init-buckets:
         condition: service_completed_successfully
@@ -518,9 +444,7 @@ networks:
     driver: bridge
 
 volumes:
-  master_data:
   volume_data:
-  filer_data:
   postgres_data:
   superset_db_data:
   pushgateway_data:

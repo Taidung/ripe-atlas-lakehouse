@@ -4,7 +4,7 @@
 
 ### Đã có từ trước (commit trên `main`)
 
-- SeaweedFS (master, volume, filer, s3) có 4 identity S3 phân quyền, bucket `staging` và `warehouse`.
+- SeaweedFS (một service `weed server`: master, volume, filer, s3) có 4 identity S3 phân quyền, bucket `staging` và `warehouse`.
 - Nessie 0.108.8 lưu trên Postgres 16; Spark chạy bằng image `tabulario/spark-iceberg`.
 - dlt ingest metadata measurement/probe và ping results theo giờ UTC+7 cho 200 probe cố định.
 
