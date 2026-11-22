@@ -16,8 +16,9 @@
 - Không chạy `expire_snapshots`: Nessie giữ lịch sử, và Gold đọc Silver theo snapshot đã công bố (time travel).
 - Muốn test mà không làm bẩn dữ liệu chính thì dùng nhánh Nessie tạm (ví dụ `tests/integration/dq_block_on_branch.sh`).
 - Lệnh `docker compose … down -v` **xoá toàn bộ volume** gồm dữ liệu SeaweedFS và lịch sử Nessie.
-- SeaweedFS dùng 3 volume: `master_data` (`/master`, trạng thái master), `volume_data` (`/data`, file dữ liệu),
-  `filer_data` (`/filer`, metadata thư mục/bucket). `WEED_LEVELDB2_DIR` trỏ filer về `/filer/filerldb2`; nếu bỏ biến
-  này, filer.toml có sẵn trong image sẽ tạo store trống ở `/data/filerldb2` và mọi bucket sẽ trông như rỗng.
+- SeaweedFS dùng một volume `volume_data:/data` cho cả 3 phần: `m9333/` (trạng thái master), `filerldb2/` (metadata
+  thư mục/bucket của filer, đường dẫn lấy từ `filer.toml` có sẵn trong image) và các file `*.dat`/`*.idx` (dữ liệu).
+  **Đừng đặt `WEED_LEVELDB2_DIR`**: trỏ filer ra ngoài `/data` thì metadata không nằm trong volume, container tạo lại
+  là mất và mọi bucket trông như rỗng dù file dữ liệu vẫn còn.
 
 Chi tiết phiên bản và cổng: `docs/compatibility.md`, `README.md` §2.
