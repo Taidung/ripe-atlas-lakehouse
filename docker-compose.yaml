@@ -304,11 +304,26 @@ services:
     image: apache/airflow:3.4.0-python3.11@sha256:be92e15d57c5be726fc39a91cd09cce8f7488483b67979e0fb74c1a2c7cfb4e2
     profiles: ["orchestration", "all"]
     restart: unless-stopped
-    command: >
-      bash -c "airflow db migrate &&
-               airflow pools set lakehouse_writer 1 'Task ghi Iceberg: tránh ghi đồng thời giữa lịch chạy và backfill' &&
-               airflow pools set atlas_api 1 'Task gọi RIPE Atlas API' &&
-               mkdir -p /opt/airflow/logs/.auth && exec airflow standalone"
+    # Chạy 4 tiến trình riêng thay cho `airflow standalone`: standalone không thoát khi scheduler chết (sự cố
+    # 2026-11-22: DNS Docker lỗi lúc cạn RAM, scheduler thoát, container vẫn "Up", DAG đứng yên). Ở đây tiến trình
+    # nào thoát thì container thoát theo, và `restart: unless-stopped` dựng lại cả cụm.
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        airflow db migrate
+        airflow pools set lakehouse_writer 1 'Task ghi Iceberg: tránh ghi đồng thời giữa lịch chạy và backfill'
+        airflow pools set atlas_api 1 'Task gọi RIPE Atlas API'
+        mkdir -p /opt/airflow/logs/.auth
+        set +e
+        airflow api-server & airflow scheduler & airflow dag-processor & airflow triggerer &
+        trap 'kill $$(jobs -p) 2>/dev/null; wait; exit 0' TERM INT
+        wait -n
+        rc=$$?
+        echo "airflow: một tiến trình đã thoát (mã $$rc); dừng container để Docker khởi động lại" >&2
+        kill $$(jobs -p) 2>/dev/null; wait
+        exit 1
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/airflow

@@ -27,6 +27,10 @@ Các lệnh dưới đây chạy từ thư mục gốc repo. Trên Git Bash (Win
 **Lưu ý khi vận hành DAG:**
 - DAG mới **mặc định bị tạm dừng**. Bật bằng lệnh `docker compose exec airflow airflow dags unpause <dag_id>`.
 - Mọi task ghi lakehouse đi qua pool `lakehouse_writer` (1 slot), nên backfill và lịch chạy không ghi đồng thời.
+- Container `airflow` chạy 4 tiến trình (api-server, scheduler, dag-processor, triggerer). Một tiến trình thoát thì
+  container thoát theo và Docker dựng lại (`restart: unless-stopped`), log có dòng `airflow: một tiến trình đã thoát`.
+  Restart count tăng liên tục (`docker inspect ripe-atlas-lakehouse-airflow-1 --format '{{.RestartCount}}'`) thường là
+  do máy cạn RAM làm DNS của Docker lỗi (`could not translate host name "airflow-db"`): tắt bớt profile không dùng.
 - Task Silver/Gold thất bại với mã thoát 2 nghĩa là **lỗi chất lượng critical**; task này không retry.
 - Mỗi lệnh transform (`python -m lakehouse ...`) và mỗi lệnh ingestion (`metadata`, `results`, `backfill`, `incremental`) nhận `--run-type`
   (`scheduled`, `reconcile`, `backfill`, `repair`, `manual`). Không truyền thì: `incremental` = `scheduled`,
